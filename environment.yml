@@ -1,0 +1,24 @@
+name: mdw
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - tk
+  - numpy
+  - scipy
+  - matplotlib
+  - scikit-learn
+  - mdtraj
+  - rdkit
+  - openmm>=8.5,<8.6
+  - pdbfixer
+  - deeptime
+  - ambertools
+  - vina>=1.2,<1.3
+  - parmed
+  - openff-toolkit
+  - openff-units
+  - openmmforcefields=0.15.1
+  - meeko=0.7.1
+  - gemmi
