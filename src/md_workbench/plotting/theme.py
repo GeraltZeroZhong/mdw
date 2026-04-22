@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
 
 from ..config import PlotStyleConfig
+from ..core.figure_clusters import bundled_data_candidates_for_figure
 
 
 def _sans_serif_stack(style: PlotStyleConfig) -> list[str]:
@@ -557,6 +558,9 @@ def _candidate_data_directories(base_path: Path) -> list[Path]:
         mapped = Path(*parts[:idx], "process_data", *parts[idx + 1 : -1])
         if mapped not in candidates:
             candidates.append(mapped)
+        for path in bundled_data_candidates_for_figure(base_path):
+            if path not in candidates:
+                candidates.append(path)
     return candidates
 
 
