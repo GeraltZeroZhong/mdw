@@ -5,7 +5,8 @@ import numpy as np
 
 from ..config import PlotSelectionConfig, PlotStyleConfig
 from ..core import save_csv, write_dict_csv
-from .bars import horizontal_bars
+from .bars import ranked_lollipop
+from .residue_labels import compact_residue_label
 from .series import line_series, mean_sd_series
 
 
@@ -70,14 +71,15 @@ def plot_combined_waterbridge(
     write_dict_csv(combined / "waterbridge_residue_occupancy_combined.csv", rows, ["protein_residue", "waterbridge_occupancy_mean", "waterbridge_occupancy_sd", "n_replicas"])
     if rows and (plot_selection is None or plot_selection.enabled("waterbridge_combined_occupancy")):
         top_rows = rows[:20]
-        horizontal_bars(
-            [r["protein_residue"] for r in reversed(top_rows)],
-            [r["waterbridge_occupancy_mean"] for r in reversed(top_rows)],
-            [r["waterbridge_occupancy_sd"] for r in reversed(top_rows)],
+        ranked_lollipop(
+            [compact_residue_label(r["protein_residue"]) for r in top_rows],
+            [r["waterbridge_occupancy_mean"] for r in top_rows],
+            [r["waterbridge_occupancy_sd"] for r in top_rows],
             combined / "waterbridge_residue_occupancy_top20",
             style,
-            title="Top residue water-bridge occupancy",
+            title="Persistent water-bridge hotspots",
             xlabel="Water-bridge occupancy",
+            color=style.categorical_palette[4],
         )
 
     min_n_frames = min(len(r["time_ns"]) for r in replica_results)

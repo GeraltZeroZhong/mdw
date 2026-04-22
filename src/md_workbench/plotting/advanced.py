@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.ndimage import binary_dilation, gaussian_filter, minimum_filter
 from scipy.stats import gaussian_kde
@@ -451,6 +452,18 @@ def plot_stationary_distribution(states, probs, out_base, style: PlotStyleConfig
     vertical_bars(states, probs, out_base, style, title="MSM stationary distribution", xlabel="MSM state", ylabel="Stationary probability")
 
 
+def _format_probability(value: float) -> str:
+    value = float(value)
+    if not np.isfinite(value):
+        return "nan"
+    if value == 0.0:
+        return "0"
+    if abs(value) < 0.01:
+        return f"{value:.1e}"
+    text = f"{value:.3f}"
+    return text.rstrip("0").rstrip(".")
+
+
 def plot_lag_scan(lag_rows, out_base, style: PlotStyleConfig):
     arr = np.asarray(lag_rows, dtype=float)
     with publication_style(style):
@@ -466,30 +479,154 @@ def plot_lag_scan(lag_rows, out_base, style: PlotStyleConfig):
         save_figure(fig, out_base, style)
 
 
-def plot_state_network(transition_matrix, stationary_probs, out_base, style: PlotStyleConfig, threshold: float = 0.05):
+def plot_state_network(transition_matrix, stationary_probs, out_base, style: PlotStyleConfig, threshold: float = 1e-6):
     T = np.asarray(transition_matrix, dtype=float)
     pi = np.asarray(stationary_probs, dtype=float)
+    if T.ndim != 2 or T.shape[0] != T.shape[1]:
+        raise ValueError("MSM transition matrix must be square for state-network plotting.")
     n = T.shape[0]
-    theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
-    xy = np.column_stack([np.cos(theta), np.sin(theta)])
+    if pi.shape[0] != n:
+        raise ValueError("Stationary distribution length must match the MSM transition matrix.")
+    T = np.where(np.isfinite(T), np.clip(T, 0.0, None), 0.0)
+    pi = np.where(np.isfinite(pi), np.clip(pi, 0.0, None), 0.0)
+    pi_sum = float(pi.sum())
+    pi = pi / pi_sum if pi_sum > 0 else np.full(n, 1.0 / max(n, 1))
+    if n == 1:
+        xy = np.array([[0.0, 0.0]])
+    elif n == 2:
+        xy = np.array([[-0.78, 0.0], [0.78, 0.0]])
+    else:
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False) + np.pi / 2
+        xy = np.column_stack([np.cos(theta), np.sin(theta)])
+
+    flux = pi[:, None] * T
+    offdiag = ~np.eye(n, dtype=bool)
+    positive_offdiag = offdiag & (T > 0.0) & (flux > 0.0)
+    max_offdiag_flux = float(np.max(flux[positive_offdiag])) if np.any(positive_offdiag) else 0.0
+    requested_min_flux = max(float(threshold), 0.0)
+    used_min_flux = requested_min_flux
+    threshold_relaxed = False
+    if max_offdiag_flux > 0 and not np.any(positive_offdiag & (flux >= requested_min_flux)):
+        used_min_flux = max(max_offdiag_flux * 0.05, 1e-12)
+        threshold_relaxed = True
+
+    edges = [
+        (i, j, float(T[i, j]), float(flux[i, j]))
+        for i in range(n)
+        for j in range(n)
+        if i != j and T[i, j] > 0.0 and flux[i, j] >= used_min_flux
+    ]
+    max_edges = max(12, min(48, 3 * max(n, 1)))
+    if len(edges) > max_edges:
+        edges = sorted(edges, key=lambda item: item[3], reverse=True)[:max_edges]
+    edges = sorted(edges, key=lambda item: (item[0], item[1]))
+    max_edge_flux = max((edge[3] for edge in edges), default=0.0)
+    edge_pairs = {(i, j) for i, j, _, _ in edges}
+
     cmap, norm = _categorical_cmap(n, style)
     with publication_style(style):
         fig, ax = plt.subplots(figsize=(6.3, 6.0))
-        for i in range(n):
-            for j in range(n):
-                if i == j or T[i, j] < threshold:
-                    continue
-                x0, y0 = xy[i]
-                x1, y1 = xy[j]
-                ax.annotate("", xy=(x1, y1), xytext=(x0, y0), arrowprops=dict(arrowstyle="->", lw=0.8 + 3.0 * T[i, j], alpha=min(0.85, 0.25 + T[i, j]), color=style.spine_color))
-        sizes = 2200 * (pi / pi.max()) if np.max(pi) > 0 else np.full(n, 300.0)
-        ax.scatter(xy[:, 0], xy[:, 1], s=sizes, c=np.arange(n), cmap=cmap, norm=norm, edgecolors="white", linewidths=1.0, zorder=3)
+        for i, j, transition_prob, edge_flux in edges:
+            x0, y0 = xy[i]
+            x1, y1 = xy[j]
+            relative_flux = (edge_flux / max_edge_flux) ** 0.55 if max_edge_flux > 0 else 1.0
+            has_reverse = (j, i) in edge_pairs
+            if n == 2:
+                curve = 0.24
+            else:
+                curve = 0.18 if has_reverse else 0.10
+            patch = FancyArrowPatch(
+                (x0, y0),
+                (x1, y1),
+                arrowstyle="-|>",
+                connectionstyle=f"arc3,rad={curve}",
+                mutation_scale=11.0 + 5.0 * relative_flux,
+                linewidth=0.75 + 3.2 * relative_flux,
+                color=style.spine_color,
+                alpha=0.34 + 0.50 * relative_flux,
+                shrinkA=22,
+                shrinkB=22,
+                zorder=2,
+            )
+            ax.add_patch(patch)
+            if n <= 12:
+                dx, dy = x1 - x0, y1 - y0
+                dist = max(float(np.hypot(dx, dy)), 1e-9)
+                nx, ny = -dy / dist, dx / dist
+                label_x = (x0 + x1) * 0.5 + nx * curve * 0.42
+                label_y = (y0 + y1) * 0.5 + ny * curve * 0.42
+                ax.text(
+                    label_x,
+                    label_y,
+                    f"P={_format_probability(transition_prob)}",
+                    ha="center",
+                    va="center",
+                    fontsize=max(style.tick_size - 1.3, 7.0),
+                    color=style.spine_color,
+                    bbox=dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor="none", alpha=0.78),
+                    zorder=4,
+                )
+
+        sizes = 620.0 + 2300.0 * np.sqrt(pi / pi.max()) if np.max(pi) > 0 else np.full(n, 800.0)
+        ax.scatter(xy[:, 0], xy[:, 1], s=sizes, c=np.arange(n), cmap=cmap, norm=norm, edgecolors="white", linewidths=1.2, zorder=5)
         for i, (x, y) in enumerate(xy):
-            ax.text(x, y, str(i), ha="center", va="center", color="white", fontsize=style.label_size, weight="bold")
+            ax.text(x, y, str(i), ha="center", va="center", color="white", fontsize=style.label_size, weight="bold", zorder=6)
+            if n <= 16:
+                if n == 2:
+                    label_x, label_y = x, y - 0.35
+                else:
+                    radial = np.array([x, y], dtype=float)
+                    radial_norm = max(float(np.linalg.norm(radial)), 1e-9)
+                    label_x, label_y = (radial + radial / radial_norm * 0.26)
+                ax.text(
+                    label_x,
+                    label_y,
+                    f"pi={_format_probability(pi[i])}",
+                    ha="center",
+                    va="center",
+                    fontsize=max(style.tick_size - 0.8, 7.2),
+                    color=style.spine_color,
+                    zorder=6,
+                )
         ax.set_aspect("equal")
+        if n == 2:
+            ax.set_xlim(-1.25, 1.25)
+            ax.set_ylim(-0.82, 0.86)
+        else:
+            ax.set_xlim(-1.45, 1.45)
+            ax.set_ylim(-1.25, 1.25)
         ax.axis("off")
         ax.set_title("MSM state network", pad=8, weight="semibold")
+        legend_lines = [
+            "Node area: stationary probability",
+            "Edge width: pi_i P_ij flux",
+            "Edge label: transition probability P_ij",
+            f"Min flux: {_format_probability(used_min_flux)}" + (" (adaptive)" if threshold_relaxed else ""),
+        ]
+        if not edges:
+            legend_lines.append("No non-self transitions above cutoff")
+        ax.text(
+            0.02,
+            0.98,
+            "\n".join(legend_lines),
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=max(style.tick_size - 1.4, 6.8),
+            color=style.spine_color,
+            bbox=dict(boxstyle="round,pad=0.32", facecolor="white", edgecolor=style.grid_color, linewidth=0.6, alpha=0.92),
+            zorder=7,
+        )
         save_figure(fig, out_base, style)
+    return {
+        "edge_metric": "equilibrium_transition_flux_pi_i_P_ij",
+        "edge_labels": "transition_probability_P_ij",
+        "requested_min_flux": requested_min_flux,
+        "used_min_flux": used_min_flux,
+        "threshold_relaxed": threshold_relaxed,
+        "edge_count": len(edges),
+        "max_offdiagonal_flux": max_offdiag_flux,
+    }
 
 
 def plot_state_population_heatmap(replica_names, cluster_labels, matrix, out_base, style: PlotStyleConfig):
@@ -523,6 +660,9 @@ def plot_transition_matrix_heatmap(transition_matrix, out_base, style: PlotStyle
         vmin=0.0,
         vmax=1.0,
         cbar_label="Transition probability",
+        annotate=T.size <= 144,
+        annotation_format="{:.3f}",
+        x_rotation=0.0 if T.shape[0] <= 6 else 30.0,
     )
 
 

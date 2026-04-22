@@ -7,8 +7,9 @@ import numpy as np
 
 from ..config import PlotSelectionConfig, PlotStyleConfig
 from ..core import aggregate_metric_rows, save_csv, write_dict_csv
-from .bars import horizontal_bars
-from .heatmaps import matrix_heatmap, simple_boxplot, stacked_fraction_area
+from .bars import ranked_distance_lollipop, ranked_lollipop
+from .heatmaps import interaction_fingerprint_heatmap, matrix_heatmap, simple_boxplot, stacked_fraction_area
+from .residue_labels import compact_replica_name, compact_residue_label
 from .series import line_series, mean_sd_series, shaded_profile
 from .theme import finalize_axes, publication_style, save_figure
 import matplotlib.pyplot as plt
@@ -38,6 +39,69 @@ def _display_metric_name(metric: str) -> str:
         "buried_surface_A2": "Buried surface",
         "hbond_count": "H-bond count",
     }.get(metric, metric.replace("_", " "))
+
+
+def _interaction_color(style: PlotStyleConfig, metric_key: str) -> str:
+    return {
+        "contact_occupancy": style.protein_color,
+        "hbond_occupancy": style.distance_color,
+        "salt_bridge_occupancy": style.accent_color,
+    }.get(metric_key, style.bar_color)
+
+
+def _interaction_rank_title(metric_key: str) -> str:
+    return {
+        "contact_occupancy": "Persistent contact hotspots",
+        "hbond_occupancy": "Persistent H-bond hotspots",
+        "salt_bridge_occupancy": "Persistent salt-bridge hotspots",
+    }.get(metric_key, "Interaction hotspots")
+
+
+def _interaction_rank_xlabel(metric_key: str) -> str:
+    return {
+        "contact_occupancy": "Contact occupancy",
+        "hbond_occupancy": "H-bond occupancy",
+        "salt_bridge_occupancy": "Salt-bridge occupancy",
+    }.get(metric_key, "Occupancy")
+
+
+def _build_contact_distance_summary(replica_results):
+    by_residue: dict[str, dict[str, list[float]]] = {}
+    for result in replica_results:
+        for row in result["contact_rows"]:
+            residue = str(row["protein_residue"])
+            payload = by_residue.setdefault(
+                residue,
+                {"contact_occupancy": [], "min_distance_mean_A": [], "min_distance_min_A": []},
+            )
+            payload["contact_occupancy"].append(float(row["contact_occupancy"]))
+            payload["min_distance_mean_A"].append(float(row["min_distance_mean_A"]))
+            payload["min_distance_min_A"].append(float(row["min_distance_min_A"]))
+
+    rows = []
+    for residue, payload in by_residue.items():
+        occupancy = np.asarray(payload["contact_occupancy"], dtype=float)
+        distance_mean = np.asarray(payload["min_distance_mean_A"], dtype=float)
+        distance_min = np.asarray(payload["min_distance_min_A"], dtype=float)
+        rows.append(
+            {
+                "protein_residue": residue,
+                "contact_occupancy_mean": float(occupancy.mean()),
+                "contact_occupancy_sd": float(occupancy.std(ddof=1) if occupancy.size > 1 else 0.0),
+                "min_distance_mean_A": float(distance_mean.mean()),
+                "min_distance_sd_A": float(distance_mean.std(ddof=1) if distance_mean.size > 1 else 0.0),
+                "min_distance_min_A": float(distance_min.mean()),
+                "n_replicas": int(occupancy.size),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            -float(row["contact_occupancy_mean"]),
+            float(row["min_distance_mean_A"]),
+            compact_residue_label(str(row["protein_residue"])),
+        )
+    )
+    return rows
 
 
 def write_overall_summary(replica_results, combined_dir: Path):
@@ -157,8 +221,46 @@ def plot_combined_occupancy_bars(
         combined_rows[out_field_name] = rows
         write_dict_csv(combined_dir / csv_name, rows, ["protein_residue", f"{out_field_name}_mean", f"{out_field_name}_sd", "n_replicas"])
         if rows and (plot_selection is None or plot_selection.enabled("basic_combined_occupancy_bars")):
-            top_rows = rows[:top_n_contacts_plot]
-            horizontal_bars([r["protein_residue"] for r in reversed(top_rows)], [r[f"{out_field_name}_mean"] for r in reversed(top_rows)], [r[f"{out_field_name}_sd"] for r in reversed(top_rows)], combined_dir / base_name, style, title=title, xlabel=xlabel)
+            if out_field_name == "contact_occupancy":
+                distance_rows = [row for row in _build_contact_distance_summary(replica_results) if float(row["contact_occupancy_mean"]) > 0.0]
+                write_dict_csv(
+                    combined_dir / "contact_occupancy_distance_summary.csv",
+                    distance_rows,
+                    [
+                        "protein_residue",
+                        "contact_occupancy_mean",
+                        "contact_occupancy_sd",
+                        "min_distance_mean_A",
+                        "min_distance_sd_A",
+                        "min_distance_min_A",
+                        "n_replicas",
+                    ],
+                )
+                top_rows = distance_rows[:top_n_contacts_plot]
+                ranked_distance_lollipop(
+                    [compact_residue_label(str(r["protein_residue"])) for r in top_rows],
+                    [float(r["contact_occupancy_mean"]) for r in top_rows],
+                    [float(r["contact_occupancy_sd"]) for r in top_rows],
+                    [float(r["min_distance_mean_A"]) for r in top_rows],
+                    combined_dir / base_name,
+                    style,
+                    title="Persistent contact hotspots\nCircle area = mean minimum distance (closer = larger)",
+                    xlabel="Contact occupancy",
+                    color=_interaction_color(style, out_field_name),
+                )
+            else:
+                top_rows = rows[:top_n_contacts_plot]
+                ordered_rows = list(top_rows)
+                ranked_lollipop(
+                    [compact_residue_label(r["protein_residue"]) for r in ordered_rows],
+                    [r[f"{out_field_name}_mean"] for r in ordered_rows],
+                    [r[f"{out_field_name}_sd"] for r in ordered_rows],
+                    combined_dir / base_name,
+                    style,
+                    title=_interaction_rank_title(out_field_name),
+                    xlabel=_interaction_rank_xlabel(out_field_name),
+                    color=_interaction_color(style, out_field_name),
+                )
     return combined_rows
 
 
@@ -167,6 +269,7 @@ def plot_key_contact_traces(
     combined_dir: Path,
     style: PlotStyleConfig,
     top_n_key_distance_residues: int,
+    contact_cutoff_A: float | None = None,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     contact_combined = aggregate_metric_rows(replica_results, "contact_rows", "contact_occupancy", "contact_occupancy")
@@ -180,6 +283,15 @@ def plot_key_contact_traces(
     if plotting_enabled:
         with publication_style(style):
             fig, ax = plt.subplots(figsize=(7.4, 4.9))
+            if contact_cutoff_A is not None:
+                ax.axhline(
+                    float(contact_cutoff_A),
+                    color=style.spine_color,
+                    linewidth=0.95,
+                    linestyle=(0, (3, 3)),
+                    alpha=0.55,
+                    zorder=0,
+                )
             for idx, label in enumerate(key_labels):
                 curves = []
                 for result in replica_results:
@@ -192,10 +304,13 @@ def plot_key_contact_traces(
                 mean = arr.mean(axis=0)
                 sd = arr.std(axis=0, ddof=1) if arr.shape[0] > 1 else np.zeros_like(mean)
                 color = style.categorical_palette[idx % len(style.categorical_palette)]
-                ax.plot(common_time_ns, mean, linewidth=style.line_width, label=label, color=color)
+                occupancy_value = next((float(row["contact_occupancy_mean"]) for row in contact_combined if row["protein_residue"] == label), np.nan)
+                display_label = compact_residue_label(label)
+                legend_label = f"{display_label} ({occupancy_value:.0%})" if np.isfinite(occupancy_value) else display_label
+                ax.plot(common_time_ns, mean, linewidth=style.line_width, label=legend_label, color=color)
                 ax.fill_between(common_time_ns, mean - sd, mean + sd, alpha=0.16, linewidth=0.0, color=color)
                 rows.extend([[label, t, m, s] for t, m, s in zip(common_time_ns, mean, sd)])
-            finalize_axes(ax, style, xlabel="Time (ns)", ylabel="Distance (Å)", title="Key residue-ligand distance traces")
+            finalize_axes(ax, style, xlabel="Time (ns)", ylabel="Minimum heavy-atom distance (Å)", title="Key contact distance trajectories")
             ax.legend(frameon=False, ncol=1)
             save_figure(fig, combined_dir / "key_contact_distance_traces", style)
     else:
@@ -314,17 +429,21 @@ def plot_interaction_heatmaps(
         per_rep_matrix.append(row)
     matrix_heatmap(
         np.asarray(per_rep_matrix, dtype=float),
-        top_res,
-        [r["replica_name"] for r in replica_results],
+        [compact_residue_label(label) for label in top_res],
+        [compact_replica_name(r["replica_name"]) for r in replica_results],
         combined_dir / "contact_replicate_heatmap",
         style,
-        title="Residue contact occupancy by replica",
+        title="Contact hotspot reproducibility",
         xlabel="Replica",
         ylabel="Residue",
         vmin=0.0,
         vmax=1.0,
+        cmap="Blues",
+        annotate=True,
+        annotation_format="{:.0%}",
+        annotation_min_abs=0.30,
         cbar_label="Contact occupancy",
-        x_rotation=35.0,
+        x_rotation=0.0,
     )
 
     metric_lookup = {
@@ -332,35 +451,48 @@ def plot_interaction_heatmaps(
         "H-bond": occupancy_rows.get("hbond_occupancy", []),
         "Salt bridge": occupancy_rows.get("salt_bridge_occupancy", []),
     }
-    all_res = []
-    for rows in metric_lookup.values():
-        all_res.extend([r["protein_residue"] for r in rows[:top_n_contacts_plot]])
-    all_res = list(dict.fromkeys(all_res))[: max(top_n_contacts_plot, 12)]
+    residue_summary: dict[str, dict[str, float]] = {}
+    mean_key_lookup = {
+        "Contact": "contact_occupancy_mean",
+        "H-bond": "hbond_occupancy_mean",
+        "Salt bridge": "salt_bridge_occupancy_mean",
+    }
+    for metric_name, rows in metric_lookup.items():
+        mean_key = mean_key_lookup[metric_name]
+        for row in rows[:top_n_contacts_plot]:
+            residue_summary.setdefault(str(row["protein_residue"]), {})[metric_name] = float(row[mean_key])
+    all_res = sorted(
+        residue_summary,
+        key=lambda label: (
+            -sum(value > 0.08 for value in residue_summary[label].values()),
+            -sum(residue_summary[label].values()),
+            -max(residue_summary[label].values() or [0.0]),
+            compact_residue_label(label),
+        ),
+    )[: max(top_n_contacts_plot, 12)]
     matrix = []
     for residue in all_res:
         vals = []
         for metric_name, rows in metric_lookup.items():
-            mean_key = {
-                "Contact": "contact_occupancy_mean",
-                "H-bond": "hbond_occupancy_mean",
-                "Salt bridge": "salt_bridge_occupancy_mean",
-            }[metric_name]
+            mean_key = mean_key_lookup[metric_name]
             match = next((float(r[mean_key]) for r in rows if r["protein_residue"] == residue), 0.0)
             vals.append(match)
         matrix.append(vals)
-    matrix_heatmap(
+    interaction_fingerprint_heatmap(
         np.asarray(matrix, dtype=float),
-        all_res,
+        [compact_residue_label(label) for label in all_res],
         list(metric_lookup.keys()),
         combined_dir / "interaction_fingerprint_heatmap",
         style,
-        title="Residue interaction fingerprint heatmap",
+        title="Interaction fingerprint by hotspot residue",
         xlabel="Interaction class",
         ylabel="Residue",
-        vmin=0.0,
-        vmax=1.0,
-        annotate=False,
-        cbar_label="Interaction occupancy",
+        interaction_colors=[
+            _interaction_color(style, "contact_occupancy"),
+            _interaction_color(style, "hbond_occupancy"),
+            _interaction_color(style, "salt_bridge_occupancy"),
+        ],
+        annotation_min=0.22,
     )
 
 
@@ -462,6 +594,7 @@ def plot_combined_basic_results(
     style: PlotStyleConfig,
     top_n_contacts_plot: int = 20,
     top_n_key_distance_residues: int = 5,
+    contact_cutoff_A: float = 4.5,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     combined_dir = Path(analysis_root) / "combined"
@@ -471,7 +604,7 @@ def plot_combined_basic_results(
     plot_combined_min_distance(replica_results, combined_dir, style, plot_selection)
     plot_combined_rmsf(replica_results, combined_dir, style, plot_selection)
     occupancy_rows = plot_combined_occupancy_bars(replica_results, combined_dir, style, top_n_contacts_plot, plot_selection)
-    plot_key_contact_traces(replica_results, combined_dir, style, top_n_key_distance_residues, plot_selection)
+    plot_key_contact_traces(replica_results, combined_dir, style, top_n_key_distance_residues, contact_cutoff_A=contact_cutoff_A, plot_selection=plot_selection)
     plot_combined_counts_and_shapes(replica_results, combined_dir, style, plot_selection)
     plot_combined_dssp(replica_results, combined_dir, style, plot_selection)
     plot_interaction_heatmaps(replica_results, occupancy_rows, combined_dir, style, top_n_contacts_plot, plot_selection)

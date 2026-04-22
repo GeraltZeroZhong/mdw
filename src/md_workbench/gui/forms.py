@@ -282,7 +282,7 @@ ADVANCED_FIELD_GROUPS = {
         },
         {
             "title": "State Models",
-            "hint": "These parameters shape clustering, MSM construction, and the state-network view.",
+            "hint": "These parameters shape clustering, MSM construction, and the state-network flux view.",
             "fields": ["n_clusters", "msm_lag_frames", "state_network_threshold", "random_state"],
         },
         {

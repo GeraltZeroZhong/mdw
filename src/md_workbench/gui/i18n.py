@@ -225,7 +225,7 @@ FIELD_LABELS = {
     "rolling_window_fraction": "Rolling-window fraction",
     "snapshot_n_frames": "Snapshot frames per replica",
     "pose_cutoff_nm": "Ligand-pocket definition cutoff (nm)",
-    "state_network_threshold": "State-network edge threshold",
+    "state_network_threshold": "State-network min flux threshold",
     "missing_residue_policy": "Missing-residue policy (internal / all / none)",
     "preprocess_mode": "Receptor preprocess mode (auto / always / never)",
     "search_center_x": "Docking center X (Å)",

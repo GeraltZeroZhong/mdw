@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import TwoSlopeNorm
+from matplotlib.colors import TwoSlopeNorm, to_rgb
+from matplotlib.patches import Rectangle
 
 from ..config import PlotStyleConfig
 from .theme import finalize_axes, publication_style, save_figure
@@ -51,6 +52,19 @@ def _annotation_color(value: float, norm) -> str:
     return "white" if mapped <= 0.22 or mapped >= 0.78 else "#1F2937"
 
 
+def _blend_with_white(color: str, weight: float) -> tuple[float, float, float]:
+    rgb = np.asarray(to_rgb(color), dtype=float)
+    white = np.ones(3, dtype=float)
+    clipped = float(np.clip(weight, 0.0, 1.0))
+    return tuple(white * (1.0 - clipped) + rgb * clipped)
+
+
+def _tile_text_color(color: tuple[float, float, float]) -> str:
+    rgb = np.asarray(color, dtype=float)
+    luminance = float(rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722)
+    return "white" if luminance < 0.52 else "#1F2937"
+
+
 def matrix_heatmap(
     matrix,
     row_labels,
@@ -67,6 +81,8 @@ def matrix_heatmap(
     cbar_label: str = "",
     center: float | None = None,
     x_rotation: float = 30.0,
+    annotation_format: str = "{:.2f}",
+    annotation_min_abs: float | None = None,
 ):
     arr = np.asarray(matrix, dtype=float)
     height = min(max(4.8, 0.095 * len(row_labels) + 2.1), 8.75)
@@ -108,15 +124,97 @@ def matrix_heatmap(
                     value = arr[i, j]
                     if not np.isfinite(value):
                         continue
+                    if annotation_min_abs is not None and abs(float(value)) < float(annotation_min_abs):
+                        continue
                     ax.text(
                         j,
                         i,
-                        f"{value:.2f}",
+                        annotation_format.format(value),
                         ha="center",
                         va="center",
                         fontsize=max(style.tick_size - 1.5, 6.5),
                         color=_annotation_color(value, im.norm),
                     )
+        save_figure(fig, out_base, style)
+
+
+def interaction_fingerprint_heatmap(
+    matrix,
+    row_labels,
+    col_labels,
+    out_base,
+    style: PlotStyleConfig,
+    title: str,
+    xlabel: str = "",
+    ylabel: str = "",
+    interaction_colors: list[str] | tuple[str, ...] | None = None,
+    annotation_min: float = 0.20,
+):
+    arr = np.asarray(matrix, dtype=float)
+    n_rows, n_cols = arr.shape
+    colors = list(interaction_colors or style.categorical_palette[:n_cols])
+    if not colors:
+        colors = [style.protein_color]
+    while len(colors) < n_cols:
+        colors.append(colors[-1])
+
+    height = min(max(4.8, 0.18 * n_rows + 2.0), 9.2)
+    width = min(max(5.6, 1.10 * n_cols + 2.8), 7.4)
+
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=(width, height))
+        ax.set_xlim(-0.5, n_cols - 0.5)
+        ax.set_ylim(n_rows - 0.5, -0.5)
+        for i in range(n_rows):
+            if i % 2 == 0:
+                ax.axhspan(i - 0.5, i + 0.5, color="#F8FAFC", zorder=0)
+            for j in range(n_cols):
+                ax.add_patch(
+                    Rectangle(
+                        (j - 0.46, i - 0.46),
+                        0.92,
+                        0.92,
+                        facecolor="#F8FAFC",
+                        edgecolor="#E5E7EB",
+                        linewidth=0.85,
+                        zorder=1,
+                    )
+                )
+                value = float(arr[i, j]) if np.isfinite(arr[i, j]) else np.nan
+                if not np.isfinite(value) or value <= 0.0:
+                    continue
+                face = _blend_with_white(colors[j], 0.15 + 0.85 * min(max(value, 0.0), 1.0) ** 0.85)
+                ax.add_patch(
+                    Rectangle(
+                        (j - 0.40, i - 0.40),
+                        0.80,
+                        0.80,
+                        facecolor=face,
+                        edgecolor=colors[j],
+                        linewidth=1.1,
+                        zorder=2,
+                    )
+                )
+                if value >= annotation_min:
+                    ax.text(
+                        j,
+                        i,
+                        f"{value:.0%}",
+                        ha="center",
+                        va="center",
+                        fontsize=max(style.tick_size - 1.1, 6.6),
+                        color=_tile_text_color(face),
+                        zorder=3,
+                    )
+        ax.set_xticks(np.arange(n_cols))
+        ax.set_xticklabels(col_labels, rotation=0.0)
+        ax.set_yticks(np.arange(n_rows))
+        ax.set_yticklabels(row_labels)
+        for tick, color in zip(ax.get_xticklabels(), colors):
+            tick.set_color(color)
+            tick.set_fontweight("semibold")
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        ax.grid(False)
         save_figure(fig, out_base, style)
 
 

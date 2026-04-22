@@ -111,7 +111,7 @@
     "temperature_K": 300.0,
     "kB_kcal_mol_K": 0.0019872041,
     "max_saved_components": 5,
-    "state_network_threshold": 0.05,
+    "state_network_threshold": 0.000001,
     "representative_snapshot_clusters": 4
   },
   "mmgbsa": {

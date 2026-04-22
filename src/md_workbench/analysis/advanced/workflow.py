@@ -186,10 +186,15 @@ def run_advanced_analysis(
         save_csv(Path(cfg.analysis_root) / "msm" / "transition_matrix.csv", ["from\\to"] + [f"state_{i}" for i in range(T.shape[1])], [[f"state_{i}", *T[i].tolist()] for i in range(T.shape[0])])
         pi = np.asarray(msm.stationary_distribution)
         save_csv(Path(cfg.analysis_root) / "msm" / "stationary_distribution.csv", ["state", "stationary_probability"], [[i, float(v)] for i, v in enumerate(pi)])
+        flux = pi[:, None] * T
+        save_csv(Path(cfg.analysis_root) / "msm" / "equilibrium_transition_flux.csv", ["from\\to"] + [f"state_{i}" for i in range(flux.shape[1])], [[f"state_{i}", *flux[i].tolist()] for i in range(flux.shape[0])])
+        msm_notes["stationary_distribution_sum"] = float(np.sum(pi))
+        msm_notes["transition_matrix_row_sums"] = [float(v) for v in np.sum(T, axis=1)]
+        msm_notes["state_network_edge_definition"] = "Edges are filtered and scaled by equilibrium transition flux pi_i * P_ij; edge labels show transition probabilities P_ij."
         if plot_msm:
             plot_stationary_distribution(np.arange(len(pi)), pi, Path(cfg.analysis_root) / "msm" / "stationary_distribution", style)
             plot_transition_matrix_heatmap(T, Path(cfg.analysis_root) / "msm" / "transition_matrix_heatmap", style)
-            plot_state_network(T, pi, Path(cfg.analysis_root) / "msm" / "state_network", style, cfg.state_network_threshold)
+            msm_notes["state_network_plot"] = plot_state_network(T, pi, Path(cfg.analysis_root) / "msm" / "state_network", style, cfg.state_network_threshold)
         try:
             its = np.asarray(msm.timescales())
             if its.ndim == 1 and its.size > 0:
