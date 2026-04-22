@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
 
 from ..config import PlotStyleConfig
 from .theme import finalize_axes, publication_style, save_figure
@@ -13,6 +14,154 @@ def _legend_kwargs(n_items: int) -> dict:
     if n_items <= 8:
         return {"loc": "center left", "bbox_to_anchor": (1.01, 0.5), "borderaxespad": 0.0, "ncol": 1}
     return {"loc": "upper center", "bbox_to_anchor": (0.5, 1.02), "borderaxespad": 0.0, "ncol": 2}
+
+
+def _blend_color(color: str, target: str, fraction: float) -> tuple[float, float, float]:
+    base = np.asarray(to_rgb(color), dtype=float)
+    end = np.asarray(to_rgb(target), dtype=float)
+    return tuple((1.0 - fraction) * base + fraction * end)
+
+
+def _rolling_window_size(n_points: int, window_fraction: float) -> int:
+    if n_points <= 2 or window_fraction <= 0:
+        return 1
+    window = max(5, int(round(n_points * float(window_fraction))))
+    if window % 2 == 0:
+        window += 1
+    if window >= n_points:
+        window = n_points if n_points % 2 == 1 else n_points - 1
+    return max(window, 1)
+
+
+def smooth_series(values, window_fraction: float = 0.10) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr.copy()
+    window = _rolling_window_size(arr.size, window_fraction)
+    if window <= 1:
+        return arr.copy()
+    finite = np.isfinite(arr)
+    numer = np.convolve(np.where(finite, arr, 0.0), np.ones(window, dtype=float), mode="same")
+    denom = np.convolve(finite.astype(float), np.ones(window, dtype=float), mode="same")
+    out = np.full(arr.shape, np.nan, dtype=float)
+    valid = denom > 0
+    out[valid] = numer[valid] / denom[valid]
+    return out
+
+
+def _last_finite_point(xs, ys) -> tuple[float, float]:
+    x_arr = np.asarray(xs, dtype=float)
+    y_arr = np.asarray(ys, dtype=float)
+    finite = np.isfinite(x_arr) & np.isfinite(y_arr)
+    if not np.any(finite):
+        return float(x_arr[-1]), float("nan")
+    idx = int(np.flatnonzero(finite)[-1])
+    return float(x_arr[idx]), float(y_arr[idx])
+
+
+def _spread_positions(values, lower: float, upper: float, min_gap: float) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.size <= 1:
+        return arr
+    available = max(upper - lower, 1e-12)
+    min_gap = min(float(min_gap), available / max(arr.size - 1, 1))
+    order = np.argsort(arr)
+    sorted_vals = arr[order].copy()
+    sorted_vals[0] = max(sorted_vals[0], lower)
+    for idx in range(1, sorted_vals.size):
+        sorted_vals[idx] = max(sorted_vals[idx], sorted_vals[idx - 1] + min_gap)
+    overflow = sorted_vals[-1] - upper
+    if overflow > 0:
+        sorted_vals -= overflow
+    for idx in range(sorted_vals.size - 2, -1, -1):
+        sorted_vals[idx] = min(sorted_vals[idx], sorted_vals[idx + 1] - min_gap)
+    underflow = lower - sorted_vals[0]
+    if underflow > 0:
+        sorted_vals += underflow
+    out = np.empty_like(sorted_vals)
+    out[order] = sorted_vals
+    return out
+
+
+def draw_summary_band(
+    ax,
+    time_ns,
+    mean,
+    sd,
+    style: PlotStyleConfig,
+    color: str,
+    *,
+    rolling_window_fraction: float = 0.10,
+    band_color: str | None = None,
+    show_endpoint: bool = True,
+):
+    time_arr = np.asarray(time_ns, dtype=float)
+    mean_arr = np.asarray(mean, dtype=float)
+    sd_arr = np.asarray(sd, dtype=float)
+    mean_s = smooth_series(mean_arr, rolling_window_fraction)
+    lower_s = smooth_series(mean_arr - sd_arr, rolling_window_fraction)
+    upper_s = smooth_series(mean_arr + sd_arr, rolling_window_fraction)
+    if np.nanmin(mean_arr) >= -1e-12 and np.nanmin(sd_arr) >= -1e-12:
+        lower_s = np.maximum(lower_s, 0.0)
+    ax.fill_between(
+        time_arr,
+        lower_s,
+        upper_s,
+        alpha=0.32,
+        linewidth=0.0,
+        color=band_color or _blend_color(color, "#FFFFFF", 0.68),
+        zorder=2,
+    )
+    ax.plot(time_arr, mean_s, linewidth=style.line_width + 0.35, color=color, zorder=3)
+    if show_endpoint and time_arr.size > 0:
+        x_end, y_end = _last_finite_point(time_arr, mean_s)
+        if np.isfinite(y_end):
+            ax.scatter(
+                [x_end],
+                [y_end],
+                s=max(style.marker_size * 6.5, 18.0),
+                color=color,
+                edgecolors="white",
+                linewidths=0.7,
+                zorder=4,
+            )
+    return mean_s, lower_s, upper_s
+
+
+def draw_replicate_summary(
+    ax,
+    time_ns,
+    arr2d,
+    style: PlotStyleConfig,
+    *,
+    color: str,
+    rolling_window_fraction: float = 0.10,
+    raw_color: str | None = None,
+    raw_alpha: float = 0.24,
+):
+    arr2d = np.asarray(arr2d, dtype=float)
+    time_arr = np.asarray(time_ns, dtype=float)
+    neutral = raw_color or _blend_color(style.spine_color, "#FFFFFF", 0.78)
+    for row in arr2d:
+        ax.plot(
+            time_arr,
+            row,
+            linewidth=max(style.thin_line_width * 0.9, 0.65),
+            alpha=raw_alpha,
+            color=neutral,
+            zorder=1,
+        )
+    mean = arr2d.mean(axis=0)
+    sd = arr2d.std(axis=0, ddof=1) if arr2d.shape[0] > 1 else np.zeros_like(mean)
+    return draw_summary_band(
+        ax,
+        time_arr,
+        mean,
+        sd,
+        style,
+        color,
+        rolling_window_fraction=rolling_window_fraction,
+    )
 
 
 def line_series(time_ns, ys, labels, ylabel, out_base, style: PlotStyleConfig, title=None, xlabel="Time (ns)", colors=None):
@@ -44,6 +193,131 @@ def mean_sd_series(time_ns, arr2d, ylabel, out_base, style: PlotStyleConfig, tit
         if individual_labels is not None or arr2d.shape[0] > 1:
             n_items = len(individual_labels) if individual_labels is not None else arr2d.shape[0] + 1
             ax.legend(frameon=False, **_legend_kwargs(n_items))
+        save_figure(fig, out_base, style)
+
+
+def summary_band_series(
+    time_ns,
+    mean,
+    sd,
+    ylabel,
+    out_base,
+    style: PlotStyleConfig,
+    *,
+    title=None,
+    xlabel="Time (ns)",
+    color: str | None = None,
+    rolling_window_fraction: float = 0.10,
+    figsize: tuple[float, float] = (7.2, 4.6),
+):
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=figsize)
+        draw_summary_band(
+            ax,
+            time_ns,
+            mean,
+            sd,
+            style,
+            color or style.mean_line_color,
+            rolling_window_fraction=rolling_window_fraction,
+        )
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        save_figure(fig, out_base, style)
+
+
+def replica_trend_series(
+    time_ns,
+    arr2d,
+    ylabel,
+    out_base,
+    style: PlotStyleConfig,
+    *,
+    title=None,
+    xlabel="Time (ns)",
+    color: str | None = None,
+    rolling_window_fraction: float = 0.10,
+    figsize: tuple[float, float] = (7.2, 4.6),
+):
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=figsize)
+        draw_replicate_summary(
+            ax,
+            time_ns,
+            arr2d,
+            style,
+            color=color or style.mean_line_color,
+            rolling_window_fraction=rolling_window_fraction,
+        )
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        save_figure(fig, out_base, style)
+
+
+def direct_label_line_series(
+    time_ns,
+    ys,
+    labels,
+    ylabel,
+    out_base,
+    style: PlotStyleConfig,
+    *,
+    title=None,
+    xlabel="Time (ns)",
+    colors=None,
+    rolling_window_fraction: float = 0.10,
+    figsize: tuple[float, float] = (7.2, 4.6),
+):
+    time_arr = np.asarray(time_ns, dtype=float)
+    smoothed = [smooth_series(y, rolling_window_fraction) for y in ys]
+    palette = colors or style.categorical_palette
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=figsize)
+        end_values = []
+        x_end_values = []
+        for idx, (y, label) in enumerate(zip(smoothed, labels)):
+            color = palette[idx % len(palette)]
+            ax.plot(time_arr, y, linewidth=style.line_width, color=color, zorder=2)
+            x_end, y_end = _last_finite_point(time_arr, y)
+            x_end_values.append(x_end)
+            end_values.append(y_end)
+            if np.isfinite(y_end):
+                ax.scatter(
+                    [x_end],
+                    [y_end],
+                    s=max(style.marker_size * 5.5, 16.0),
+                    color=color,
+                    edgecolors="white",
+                    linewidths=0.6,
+                    zorder=3,
+                )
+        finite_ends = np.asarray([value for value in end_values if np.isfinite(value)], dtype=float)
+        if finite_ends.size:
+            lower = float(np.nanmin(finite_ends))
+            upper = float(np.nanmax(finite_ends))
+            label_gap = max((upper - lower) * 0.06, 0.02)
+            label_positions = _spread_positions(end_values, lower, upper, label_gap)
+        else:
+            label_positions = np.asarray(end_values, dtype=float)
+        x_span = float(time_arr[-1] - time_arr[0]) if time_arr.size > 1 else 1.0
+        x_pad = max(x_span * 0.08, 0.8)
+        if time_arr.size:
+            ax.set_xlim(float(time_arr[0]), float(time_arr[-1]) + x_pad)
+        for idx, (label, y_end, y_label, x_end) in enumerate(zip(labels, end_values, label_positions, x_end_values)):
+            if not np.isfinite(y_end):
+                continue
+            color = palette[idx % len(palette)]
+            leader_x = x_end + x_pad * 0.18
+            text_x = x_end + x_pad * 0.30
+            ax.plot([x_end, leader_x], [y_end, y_label], linewidth=0.8, color=_blend_color(color, "#FFFFFF", 0.38), zorder=1)
+            ax.text(
+                text_x,
+                y_label,
+                label,
+                color=color,
+                fontsize=max(style.legend_size + 0.15, 7.0),
+                va="center",
+                ha="left",
+            )
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
         save_figure(fig, out_base, style)
 
 

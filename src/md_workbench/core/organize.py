@@ -10,6 +10,39 @@ from .files import ensure_dir
 
 FIGURE_EXTS = {".png", ".svg", ".pdf"}
 DATA_EXTS = {".csv", ".json", ".txt", ".log", ".dat", ".pdb"}
+THEMATIC_FIGURE_GROUPS = {
+    "interaction_networks": {
+        "contact_count_combined",
+        "contact_occupancy_top20",
+        "contact_replicate_heatmap",
+        "hbond_count_combined",
+        "hbond_residue_occupancy_top20",
+        "interaction_fingerprint_heatmap",
+        "key_contact_distance_traces",
+        "salt_bridge_count_combined",
+        "salt_bridge_residue_occupancy",
+        "waterbridge_count_combined",
+        "waterbridge_count_replot",
+        "waterbridge_residue_occupancy_top20",
+    },
+    "stability_compaction": {
+        "buried_surface_combined",
+        "convergence_block_heatmap",
+        "min_distance_combined",
+        "radius_of_gyration_combined",
+        "replicate_consistency_boxplot",
+        "replicate_consistency_zscore_heatmap",
+        "rmsd_combined",
+        "rmsd_replot_ligand",
+        "rmsd_replot_protein",
+        "sasa_components_combined",
+    },
+}
+THEMATIC_FIGURE_LOOKUP = {
+    stem: group
+    for group, stems in THEMATIC_FIGURE_GROUPS.items()
+    for stem in stems
+}
 
 
 def _copy_with_structure(file_path: Path, source_root: Path, target_root: Path) -> str:
@@ -78,6 +111,20 @@ def _write_organized_figure_notes(figure_files: list[str]):
     return note_files
 
 
+def _mirror_thematic_figures(figure_files: list[str], figures_root: Path):
+    mirrored = []
+    for file_path in figure_files:
+        path = Path(file_path)
+        group = THEMATIC_FIGURE_LOOKUP.get(path.stem)
+        if group is None:
+            continue
+        dest = figures_root / group / path.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest)
+        mirrored.append(str(dest.resolve()))
+    return mirrored
+
+
 def _collect_simulation_logs(run_cfg: RunConfig, target_root: Path):
     copied = []
     root = Path(run_cfg.output_root)
@@ -133,6 +180,7 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         data_files.extend(_collect_analysis_data(Path(mmgbsa_cfg.analysis_root), data_root / "mmgbsa"))
     if bundle_cfg.include_simulation_logs:
         data_files.extend(_collect_simulation_logs(run_cfg, data_root))
+    figure_files.extend(_mirror_thematic_figures(list(figure_files), figures_root))
     note_files = _write_organized_figure_notes(figure_files)
 
     cluster_counts = {cluster: 0 for cluster in BUNDLE_CLUSTER_ORDER}

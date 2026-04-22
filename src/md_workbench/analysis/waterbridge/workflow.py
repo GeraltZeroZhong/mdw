@@ -64,5 +64,5 @@ def run_waterbridge_analysis(
             subtotal=1,
             subdetail="Replica completed",
         )
-    plot_combined_waterbridge(replica_results, cfg.analysis_root, style, plot_selection)
+    plot_combined_waterbridge(replica_results, cfg.analysis_root, style, plot_selection=plot_selection)
     return str(Path(cfg.analysis_root).resolve())

@@ -7,7 +7,7 @@ from ..config import PlotSelectionConfig, PlotStyleConfig
 from ..core import save_csv, write_dict_csv
 from .bars import ranked_lollipop
 from .residue_labels import compact_residue_label
-from .series import line_series, mean_sd_series
+from .series import line_series, replica_trend_series
 
 
 def plot_replica_waterbridge_counts(time_ns, waterbridge_count, out_dir: str | Path, replica_name: str, style: PlotStyleConfig):
@@ -28,6 +28,7 @@ def plot_combined_waterbridge(
     replica_results,
     analysis_root: str,
     style: PlotStyleConfig,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     combined = Path(analysis_root) / "combined"
@@ -99,12 +100,13 @@ def plot_combined_waterbridge(
         ).tolist(),
     )
     if plot_selection is None or plot_selection.enabled("waterbridge_combined_counts"):
-        mean_sd_series(
+        replica_trend_series(
             common_time_ns,
             count_stack,
             "Number of bridging waters",
             combined / "waterbridge_count_combined",
             style,
             title="Strict water-bridge count",
-            individual_labels=names,
+            color=style.distance_color,
+            rolling_window_fraction=rolling_window_fraction,
         )

@@ -10,7 +10,7 @@ from ..core import aggregate_metric_rows, save_csv, write_dict_csv
 from .bars import ranked_distance_lollipop, ranked_lollipop
 from .heatmaps import interaction_fingerprint_heatmap, matrix_heatmap, simple_boxplot, stacked_fraction_area
 from .residue_labels import compact_replica_name, compact_residue_label
-from .series import line_series, mean_sd_series, shaded_profile
+from .series import direct_label_line_series, draw_replicate_summary, replica_trend_series, shaded_profile
 from .theme import finalize_axes, publication_style, save_figure
 import matplotlib.pyplot as plt
 
@@ -63,6 +63,21 @@ def _interaction_rank_xlabel(metric_key: str) -> str:
         "hbond_occupancy": "H-bond occupancy",
         "salt_bridge_occupancy": "Salt-bridge occupancy",
     }.get(metric_key, "Occupancy")
+
+
+def _series_summary_color(metric_key: str, style: PlotStyleConfig) -> str:
+    return {
+        "protein_rmsd_A": style.protein_color,
+        "ligand_rmsd_A": style.ligand_color,
+        "global_min_distance_A": style.distance_color,
+        "contact_count": style.protein_color,
+        "hbond_count": style.distance_color,
+        "salt_bridge_count": style.accent_color,
+        "rg_A": style.protein_color,
+        "buried_surface_A2": style.accent_color,
+        "com_distance_A": style.distance_color,
+        "orientation_angle_deg": style.ligand_color,
+    }.get(metric_key, style.mean_line_color)
 
 
 def _build_contact_distance_summary(replica_results):
@@ -131,6 +146,7 @@ def plot_combined_rmsd(
     replica_results,
     combined_dir: Path,
     style: PlotStyleConfig,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     min_n_frames = min(len(r["time_ns"]) for r in replica_results)
@@ -141,27 +157,34 @@ def plot_combined_rmsd(
     save_csv(combined_dir / "rmsd_combined.csv", ["time_ns"] + [f"{name}_protein_backbone_rmsd_A" for name in names] + [f"{name}_ligand_heavy_rmsd_A" for name in names] + ["protein_backbone_rmsd_mean_A", "protein_backbone_rmsd_sd_A", "ligand_heavy_rmsd_mean_A", "ligand_heavy_rmsd_sd_A"], np.column_stack([common_time_ns, protein.T, ligand.T, protein.mean(axis=0), protein.std(axis=0, ddof=1) if protein.shape[0] > 1 else np.zeros(min_n_frames), ligand.mean(axis=0), ligand.std(axis=0, ddof=1) if ligand.shape[0] > 1 else np.zeros(min_n_frames)]).tolist())
     if plot_selection is None or plot_selection.enabled("basic_combined_rmsd"):
         with publication_style(style):
-            fig, axes = plt.subplots(2, 1, figsize=(7.4, 6.2), sharex=True)
-            for i, name in enumerate(names):
-                color = style.categorical_palette[i % len(style.categorical_palette)]
-                axes[0].plot(common_time_ns, protein[i], linewidth=style.thin_line_width, alpha=0.35, label=name, color=color)
-                axes[1].plot(common_time_ns, ligand[i], linewidth=style.thin_line_width, alpha=0.35, label=name, color=color)
-            p_mean, p_sd = protein.mean(axis=0), protein.std(axis=0, ddof=1) if protein.shape[0] > 1 else np.zeros_like(protein.mean(axis=0))
-            l_mean, l_sd = ligand.mean(axis=0), ligand.std(axis=0, ddof=1) if ligand.shape[0] > 1 else np.zeros_like(ligand.mean(axis=0))
-            axes[0].plot(common_time_ns, p_mean, linewidth=style.line_width + 0.4, label="Mean", color=style.protein_color)
-            axes[0].fill_between(common_time_ns, p_mean - p_sd, p_mean + p_sd, alpha=0.22, linewidth=0.0, color=style.band_color)
-            axes[1].plot(common_time_ns, l_mean, linewidth=style.line_width + 0.4, label="Mean", color=style.ligand_color)
-            axes[1].fill_between(common_time_ns, l_mean - l_sd, l_mean + l_sd, alpha=0.22, linewidth=0.0, color=style.band_color)
-            finalize_axes(axes[0], style, ylabel="Protein backbone RMSD (Å)", title="RMSD across replicas")
-            finalize_axes(axes[1], style, xlabel="Time (ns)", ylabel="Ligand heavy-atom RMSD (Å)")
-            legend_handles, legend_labels = axes[0].get_legend_handles_labels()
-            fig.legend(
-                legend_handles,
-                legend_labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 1.01),
-                ncol=min(max(len(legend_labels), 1), 3),
-                frameon=False,
+            fig, axes = plt.subplots(2, 1, figsize=(7.6, 5.8), sharex=True)
+            draw_replicate_summary(
+                axes[0],
+                common_time_ns,
+                protein,
+                style,
+                color=style.protein_color,
+                rolling_window_fraction=rolling_window_fraction,
+            )
+            draw_replicate_summary(
+                axes[1],
+                common_time_ns,
+                ligand,
+                style,
+                color=style.ligand_color,
+                rolling_window_fraction=rolling_window_fraction,
+            )
+            finalize_axes(axes[0], style, ylabel="Protein backbone RMSD (Å)", title="Protein backbone")
+            finalize_axes(axes[1], style, xlabel="Time (ns)", ylabel="Ligand heavy-atom RMSD (Å)", title="Ligand heavy-atom")
+            fig.suptitle("RMSD across replicas", y=1.02, weight="semibold", fontsize=style.title_size + 1.0)
+            fig.text(
+                0.015,
+                0.99,
+                "thin gray = replica trajectories, thick color = rolling mean, band = replica spread",
+                fontsize=max(style.legend_size - 0.2, 6.7),
+                color=style.spine_color,
+                alpha=0.78,
+                va="top",
             )
             save_figure(fig, combined_dir / "rmsd_combined", style)
 
@@ -170,12 +193,22 @@ def plot_combined_min_distance(
     replica_results,
     combined_dir: Path,
     style: PlotStyleConfig,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     time_ns, stack, names = _common_time_and_stack(replica_results, "global_min_distance_A")
     _write_stack_csv(combined_dir / "min_distance_combined.csv", time_ns, stack, [f"{n}_min_distance_A" for n in names], "mean_min_distance_A", "sd_min_distance_A")
     if plot_selection is None or plot_selection.enabled("basic_combined_min_distance"):
-        mean_sd_series(time_ns, stack, "Minimum ligand-protein distance (Å)", combined_dir / "min_distance_combined", style, title="Ligand-protein minimum heavy-atom distance", individual_labels=names)
+        replica_trend_series(
+            time_ns,
+            stack,
+            "Minimum ligand-protein distance (Å)",
+            combined_dir / "min_distance_combined",
+            style,
+            title="Ligand-protein minimum heavy-atom distance",
+            color=_series_summary_color("global_min_distance_A", style),
+            rolling_window_fraction=rolling_window_fraction,
+        )
 
 
 def plot_combined_rmsf(
@@ -270,6 +303,7 @@ def plot_key_contact_traces(
     style: PlotStyleConfig,
     top_n_key_distance_residues: int,
     contact_cutoff_A: float | None = None,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     contact_combined = aggregate_metric_rows(replica_results, "contact_rows", "contact_occupancy", "contact_occupancy")
@@ -280,52 +314,100 @@ def plot_key_contact_traces(
     common_time_ns = replica_results[0]["time_ns"][:min_n_frames]
     rows = []
     plotting_enabled = plot_selection is None or plot_selection.enabled("basic_combined_key_contact_traces")
-    if plotting_enabled:
+    panel_payloads = []
+    for idx, label in enumerate(key_labels):
+        curves = []
+        for result in replica_results:
+            curve = result["contact_curves_A"].get(label)
+            if curve is not None:
+                curves.append(curve[:min_n_frames])
+        if not curves:
+            continue
+        arr = np.vstack(curves)
+        mean = arr.mean(axis=0)
+        sd = arr.std(axis=0, ddof=1) if arr.shape[0] > 1 else np.zeros_like(mean)
+        color = style.categorical_palette[idx % len(style.categorical_palette)]
+        occupancy_value = next((float(row["contact_occupancy_mean"]) for row in contact_combined if row["protein_residue"] == label), np.nan)
+        panel_payloads.append(
+            {
+                "label": label,
+                "display_label": compact_residue_label(label),
+                "arr": arr,
+                "mean": mean,
+                "sd": sd,
+                "color": color,
+                "occupancy": occupancy_value,
+            }
+        )
+        rows.extend([[label, t, m, s] for t, m, s in zip(common_time_ns, mean, sd)])
+    if plotting_enabled and panel_payloads:
         with publication_style(style):
-            fig, ax = plt.subplots(figsize=(7.4, 4.9))
-            if contact_cutoff_A is not None:
-                ax.axhline(
-                    float(contact_cutoff_A),
-                    color=style.spine_color,
-                    linewidth=0.95,
-                    linestyle=(0, (3, 3)),
-                    alpha=0.55,
-                    zorder=0,
+            n_panels = len(panel_payloads)
+            fig, axes = plt.subplots(n_panels, 1, figsize=(7.6, 1.42 * n_panels + 1.4), sharex=True, sharey=True)
+            axes_arr = np.atleast_1d(axes)
+            upper = np.concatenate([payload["mean"] + payload["sd"] for payload in panel_payloads])
+            finite_upper = upper[np.isfinite(upper)]
+            axis_cap = None
+            clipped = False
+            if finite_upper.size:
+                focus_limit = float(np.nanpercentile(finite_upper, 97.5))
+                cutoff_focus = float(contact_cutoff_A) * 2.4 if contact_cutoff_A is not None else 0.0
+                axis_cap = max(6.0, cutoff_focus, focus_limit)
+                axis_cap = float(np.ceil(axis_cap * 2.0) / 2.0)
+                clipped = float(np.nanmax(finite_upper)) > axis_cap + 1e-9
+            for idx, (ax, payload) in enumerate(zip(axes_arr, panel_payloads)):
+                if contact_cutoff_A is not None:
+                    ax.axhline(
+                        float(contact_cutoff_A),
+                        color=style.spine_color,
+                        linewidth=0.9,
+                        linestyle=(0, (3, 3)),
+                        alpha=0.48,
+                        zorder=0,
+                    )
+                draw_replicate_summary(
+                    ax,
+                    common_time_ns,
+                    payload["arr"],
+                    style,
+                    color=payload["color"],
+                    rolling_window_fraction=rolling_window_fraction,
                 )
-            for idx, label in enumerate(key_labels):
-                curves = []
-                for result in replica_results:
-                    curve = result["contact_curves_A"].get(label)
-                    if curve is not None:
-                        curves.append(curve[:min_n_frames])
-                if not curves:
-                    continue
-                arr = np.vstack(curves)
-                mean = arr.mean(axis=0)
-                sd = arr.std(axis=0, ddof=1) if arr.shape[0] > 1 else np.zeros_like(mean)
-                color = style.categorical_palette[idx % len(style.categorical_palette)]
-                occupancy_value = next((float(row["contact_occupancy_mean"]) for row in contact_combined if row["protein_residue"] == label), np.nan)
-                display_label = compact_residue_label(label)
-                legend_label = f"{display_label} ({occupancy_value:.0%})" if np.isfinite(occupancy_value) else display_label
-                ax.plot(common_time_ns, mean, linewidth=style.line_width, label=legend_label, color=color)
-                ax.fill_between(common_time_ns, mean - sd, mean + sd, alpha=0.16, linewidth=0.0, color=color)
-                rows.extend([[label, t, m, s] for t, m, s in zip(common_time_ns, mean, sd)])
-            finalize_axes(ax, style, xlabel="Time (ns)", ylabel="Minimum heavy-atom distance (Å)", title="Key contact distance trajectories")
-            ax.legend(frameon=False, ncol=1)
+                finalize_axes(ax, style, xlabel="Time (ns)" if idx == n_panels - 1 else None)
+                if idx != n_panels - 1:
+                    ax.tick_params(labelbottom=False)
+                ax.set_ylabel("")
+                panel_label = payload["display_label"]
+                if np.isfinite(payload["occupancy"]):
+                    panel_label = f"{panel_label}   {payload['occupancy']:.0%}"
+                ax.text(
+                    0.01,
+                    0.86,
+                    panel_label,
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="top",
+                    color=payload["color"],
+                    fontsize=max(style.legend_size + 0.3, 7.0),
+                    weight="bold",
+                )
+            if axis_cap is not None:
+                axes_arr[0].set_ylim(0.0, axis_cap)
+            fig.suptitle("Key contact distance trajectories", y=1.02, weight="semibold", fontsize=style.title_size + 1.0)
+            fig.supylabel("Minimum heavy-atom distance (Å)")
+            helper = "each hotspot gets its own panel; colored line = rolling mean"
+            if clipped and axis_cap is not None:
+                helper += f"; spikes clipped above {axis_cap:.1f} Å"
+            fig.text(
+                0.015,
+                0.99,
+                helper,
+                fontsize=max(style.legend_size - 0.25, 6.6),
+                color=style.spine_color,
+                alpha=0.78,
+                va="top",
+            )
             save_figure(fig, combined_dir / "key_contact_distance_traces", style)
-    else:
-        for label in key_labels:
-            curves = []
-            for result in replica_results:
-                curve = result["contact_curves_A"].get(label)
-                if curve is not None:
-                    curves.append(curve[:min_n_frames])
-            if not curves:
-                continue
-            arr = np.vstack(curves)
-            mean = arr.mean(axis=0)
-            sd = arr.std(axis=0, ddof=1) if arr.shape[0] > 1 else np.zeros_like(mean)
-            rows.extend([[label, t, m, s] for t, m, s in zip(common_time_ns, mean, sd)])
     save_csv(combined_dir / "key_contact_distance_traces.csv", ["protein_residue", "time_ns", "mean_distance_A", "sd_distance_A"], rows)
 
 
@@ -333,6 +415,7 @@ def plot_combined_counts_and_shapes(
     replica_results,
     combined_dir: Path,
     style: PlotStyleConfig,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     series_specs = [
@@ -348,14 +431,33 @@ def plot_combined_counts_and_shapes(
         time_ns, stack, names = _common_time_and_stack(replica_results, key)
         _write_stack_csv(combined_dir / f"{base}.csv", time_ns, stack, [f"{n}_{key}" for n in names], f"mean_{key}", f"sd_{key}")
         if plot_selection is None or plot_selection.enabled("basic_combined_counts_and_shapes"):
-            mean_sd_series(time_ns, stack, ylabel, combined_dir / base, style, title=title, individual_labels=names)
+            replica_trend_series(
+                time_ns,
+                stack,
+                ylabel,
+                combined_dir / base,
+                style,
+                title=title,
+                color=_series_summary_color(key, style),
+                rolling_window_fraction=rolling_window_fraction,
+            )
 
     time_ns, complex_stack, names = _common_time_and_stack(replica_results, "complex_sasa_A2")
     _, protein_stack, _ = _common_time_and_stack(replica_results, "protein_sasa_A2")
     _, ligand_stack, _ = _common_time_and_stack(replica_results, "ligand_sasa_A2")
     save_csv(combined_dir / "sasa_components_combined.csv", ["time_ns", "complex_sasa_mean_A2", "protein_sasa_mean_A2", "ligand_sasa_mean_A2"], np.column_stack([time_ns, complex_stack.mean(axis=0), protein_stack.mean(axis=0), ligand_stack.mean(axis=0)]).tolist())
     if plot_selection is None or plot_selection.enabled("basic_combined_counts_and_shapes"):
-        line_series(time_ns, [complex_stack.mean(axis=0), protein_stack.mean(axis=0), ligand_stack.mean(axis=0)], ["Complex SASA", "Protein SASA", "Ligand SASA"], "Area (Å²)", combined_dir / "sasa_components_combined", style, title="SASA components across replicas")
+        direct_label_line_series(
+            time_ns,
+            [complex_stack.mean(axis=0), protein_stack.mean(axis=0), ligand_stack.mean(axis=0)],
+            ["Complex SASA", "Protein SASA", "Ligand SASA"],
+            "Area (Å²)",
+            combined_dir / "sasa_components_combined",
+            style,
+            title="SASA components across replicas",
+            colors=[style.protein_color, style.accent_color, style.ligand_color],
+            rolling_window_fraction=rolling_window_fraction,
+        )
 
 
 def plot_combined_dssp(
@@ -595,17 +697,18 @@ def plot_combined_basic_results(
     top_n_contacts_plot: int = 20,
     top_n_key_distance_residues: int = 5,
     contact_cutoff_A: float = 4.5,
+    rolling_window_fraction: float = 0.10,
     plot_selection: PlotSelectionConfig | None = None,
 ):
     combined_dir = Path(analysis_root) / "combined"
     combined_dir.mkdir(parents=True, exist_ok=True)
     write_overall_summary(replica_results, combined_dir)
-    plot_combined_rmsd(replica_results, combined_dir, style, plot_selection)
-    plot_combined_min_distance(replica_results, combined_dir, style, plot_selection)
+    plot_combined_rmsd(replica_results, combined_dir, style, rolling_window_fraction, plot_selection)
+    plot_combined_min_distance(replica_results, combined_dir, style, rolling_window_fraction, plot_selection)
     plot_combined_rmsf(replica_results, combined_dir, style, plot_selection)
     occupancy_rows = plot_combined_occupancy_bars(replica_results, combined_dir, style, top_n_contacts_plot, plot_selection)
-    plot_key_contact_traces(replica_results, combined_dir, style, top_n_key_distance_residues, contact_cutoff_A=contact_cutoff_A, plot_selection=plot_selection)
-    plot_combined_counts_and_shapes(replica_results, combined_dir, style, plot_selection)
+    plot_key_contact_traces(replica_results, combined_dir, style, top_n_key_distance_residues, contact_cutoff_A=contact_cutoff_A, rolling_window_fraction=rolling_window_fraction, plot_selection=plot_selection)
+    plot_combined_counts_and_shapes(replica_results, combined_dir, style, rolling_window_fraction, plot_selection)
     plot_combined_dssp(replica_results, combined_dir, style, plot_selection)
     plot_interaction_heatmaps(replica_results, occupancy_rows, combined_dir, style, top_n_contacts_plot, plot_selection)
     plot_convergence(replica_results, combined_dir, style, plot_selection)
