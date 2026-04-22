@@ -167,16 +167,25 @@ def _parse_occupancy_from_pdb_line(line: str) -> float:
         return 0.0
 
 
+def _is_hydrogen_pdb_atom(line: str) -> bool:
+    atom_name = line[12:16].strip().upper()
+    element = line[76:78].strip().upper()
+    return element in {"H", "D"} or atom_name.startswith(("H", "D"))
+
+
 def sanitize_receptor_for_docking(input_pdb: str, output_pdb: str) -> str:
     """Write a Meeko-friendly receptor PDB.
 
     The project intentionally ignores embedded ligands and other heterogens for
     receptor preparation. In practice, mmCIF/PDB-to-PDB conversion and alternate
     locations can leave records that make RDKit sanitization inside Meeko fail.
-    For docking we therefore keep only polymer ATOM records from standard
-    residues, drop terminal OXT atoms that Meeko/RDKit can mis-connect, collapse
-    alternate locations to a single representative per atom, and write a clean
-    PDB file for ``mk_prepare_receptor.py``.
+    Meeko also infers residue connectivity from 3D coordinates; for protonated
+    structures with locally strained side chains this can create spurious bonds
+    when explicit hydrogens are present. For docking we therefore keep only
+    polymer ATOM records from standard residues, strip explicit hydrogens, drop
+    terminal OXT atoms that Meeko/RDKit can mis-connect, collapse alternate
+    locations to a single representative per atom, and write a clean PDB file
+    for ``mk_prepare_receptor.py``.
     """
     input_pdb = str(check_input_file(input_pdb))
     out = Path(output_pdb)
@@ -187,6 +196,8 @@ def sanitize_receptor_for_docking(input_pdb: str, output_pdb: str) -> str:
     with open(input_pdb, "r", encoding="utf-8", errors="ignore") as handle:
         for line in handle:
             if not line.startswith("ATOM"):
+                continue
+            if _is_hydrogen_pdb_atom(line):
                 continue
             resname = line[17:20].strip().upper()
             if resname and resname not in STANDARD_POLYMER_RESIDUES:
