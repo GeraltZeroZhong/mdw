@@ -6,6 +6,7 @@ import json
 import shutil
 
 from ..config import AdvancedAnalysisConfig, BasicAnalysisConfig, MMGBSAConfig, OutputBundleConfig, RunConfig, WaterBridgeConfig
+from .figure_clusters import BUNDLE_CLUSTER_ORDER, classify_bundle_figure
 from .files import ensure_dir
 
 FIGURE_EXTS = {".png", ".svg", ".pdf"}
@@ -89,6 +90,12 @@ NONFUNCTIONAL_RELATIVE_PREFIXES = {"combined", "pca", "tica", "clustering", "msm
 def _copy_with_structure(file_path: Path, source_root: Path, target_root: Path) -> str:
     rel = file_path.relative_to(source_root)
     dest = target_root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(file_path, dest)
+    return str(dest.resolve())
+
+
+def _copy_to_path(file_path: Path, dest: Path) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(file_path, dest)
     return str(dest.resolve())
@@ -185,6 +192,15 @@ def _collect_simulation_logs(run_cfg: RunConfig, target_root: Path):
     return copied
 
 
+def _clear_dir_contents(root: Path):
+    root.mkdir(parents=True, exist_ok=True)
+    for child in root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
 def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_cfg: BasicAnalysisConfig, water_cfg: WaterBridgeConfig, advanced_cfg: AdvancedAnalysisConfig, mmgbsa_cfg: MMGBSAConfig, do_basic: bool, do_water: bool, do_advanced: bool, do_mmgbsa: bool) -> dict[str, str | int]:
     if not bundle_cfg.enabled:
         return {}
@@ -193,6 +209,15 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
     _refresh_bundle_layout(bundle_root, bundle_cfg)
     figures_root = ensure_dir(bundle_root / bundle_cfg.figures_dir_name)
     data_root = ensure_dir(bundle_root / bundle_cfg.data_dir_name)
+
+    cleared_roots = set()
+    bundle_root_resolved = bundle_root.resolve()
+    for root in (figures_root, data_root):
+        resolved = root.resolve()
+        if resolved == bundle_root_resolved or resolved in cleared_roots:
+            continue
+        _clear_dir_contents(root)
+        cleared_roots.add(resolved)
 
     figure_files = []
     data_files = []
