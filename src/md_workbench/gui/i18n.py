@@ -252,6 +252,8 @@ FIELD_LABELS = {
     "source_root": "Replica source root for MM/GBSA",
     "auto_run": "Auto-run MM/GBSA when inputs are available",
     "non_blocking": "Do not fail the whole workflow if MM/GBSA fails",
+    "use_mpi": "Run MM/GBSA with MPI",
+    "mpi_ranks": "MM/GBSA MPI ranks",
     "mmpbsa_input_file": "MM/GBSA input file name",
     "complex_solvated_prmtop": "MM/GBSA solvated complex prmtop",
     "complex_prmtop": "MM/GBSA dry complex prmtop",

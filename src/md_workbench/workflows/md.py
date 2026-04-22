@@ -203,10 +203,10 @@ def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallbac
         emit_progress(progress_callback, completed_units, total_units, "advanced_analysis", "Completed advanced analysis")
     if cfg.do_mmgbsa_postprocess:
         emit_progress(progress_callback, completed_units, total_units, "mmgbsa_postprocess", "Running MM/GBSA postprocess")
-        from ..postprocess.mmgbsa import run_mmgbsa_postprocess
+        from ..postprocess.mmgbsa import run_mmgbsa_postprocess, summarize_mmgbsa_postprocess_result
         try:
             outputs["mmgbsa_postprocess"] = run_mmgbsa_postprocess(cfg.mmgbsa, cfg.plot_style, cfg.plot_selection)
-            mmgbsa_detail = "Completed MM/GBSA postprocess"
+            mmgbsa_detail = summarize_mmgbsa_postprocess_result(outputs["mmgbsa_postprocess"])
         except Exception as exc:
             if cfg.mmgbsa.non_blocking:
                 outputs["mmgbsa_postprocess"] = {"status": "failed_non_blocking", "error": str(exc)}

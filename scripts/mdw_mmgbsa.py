@@ -7,7 +7,7 @@ import json
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from md_workbench.config import load_workflow_config
-from md_workbench.core import start_run_log
+from md_workbench.core import normalize_workflow_paths, start_run_log
 from md_workbench.postprocess.mmgbsa import run_mmgbsa_postprocess
 
 if __name__ == "__main__":
@@ -18,6 +18,7 @@ if __name__ == "__main__":
     default_cfg = Path(__file__).resolve().parents[1] / "default_config.json"
     config_path = args.config or args.config_positional or str(default_cfg)
     cfg = load_workflow_config(config_path)
+    cfg = normalize_workflow_paths(cfg)
     log_session = start_run_log(cfg.workspace_root, "mmgbsa_postprocess")
     log_session.log(f"Config path: {Path(config_path).resolve()}")
     log_session.log_json("Workflow configuration", cfg.to_dict())

@@ -140,6 +140,8 @@ class MMGBSAConfig:
     source_root: str = "work/md"
     auto_run: bool = True
     non_blocking: bool = True
+    use_mpi: bool = False
+    mpi_ranks: int = 4
     mmpbsa_input_file: str = "mmpbsa.in"
     complex_solvated_prmtop: str = "complex_solvated.prmtop"
     complex_prmtop: str = "complex.prmtop"
