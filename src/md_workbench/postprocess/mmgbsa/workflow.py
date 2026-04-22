@@ -252,6 +252,35 @@ def _parse_per_residue(replica_out_dir: Path, cfg: MMGBSAConfig):
     return [{"label": str(row["label"]), "value": float(row["mean_kcal_mol"])} for row in summary_rows]
 
 
+def _parse_replica_outputs(replica_out_dir: Path, cfg: MMGBSAConfig) -> dict:
+    parsed = {}
+    summary_rows = _parse_summary_table(replica_out_dir, cfg)
+    if summary_rows:
+        parsed["summary_rows"] = summary_rows
+    per_frame = _parse_per_frame(replica_out_dir, cfg)
+    if per_frame:
+        parsed["per_frame"] = per_frame
+    per_residue = _parse_per_residue(replica_out_dir, cfg)
+    if per_residue:
+        parsed["per_residue"] = per_residue
+    return parsed
+
+
+def _load_existing_replica_results(analysis_root: Path, cfg: MMGBSAConfig) -> list[dict]:
+    reused = []
+    for replica_out in sorted(path for path in analysis_root.glob("replica_*") if path.is_dir()):
+        parsed = _parse_replica_outputs(replica_out, cfg)
+        if parsed:
+            reused.append(
+                {
+                    "replica": replica_out.name,
+                    "run": {"status": "reused_existing_outputs"},
+                    **parsed,
+                }
+            )
+    return reused
+
+
 def summarize_mmgbsa_postprocess_result(result: dict | None) -> str:
     if not result:
         return "MM/GBSA postprocess completed without a result payload"
@@ -456,10 +485,7 @@ def run_mmgbsa_postprocess(
                 replica_out = ensure_dir(analysis_root / replica_dir.name)
                 run_result = _auto_run_replica(replica_dir, replica_out, cfg)
                 item = {"replica": replica_dir.name, "run": run_result}
-                if run_result.get("status") in {"ok", "failed"}:
-                    item["summary_rows"] = _parse_summary_table(replica_out, cfg)
-                    item["per_frame"] = _parse_per_frame(replica_out, cfg)
-                    item["per_residue"] = _parse_per_residue(replica_out, cfg)
+                item.update(_parse_replica_outputs(replica_out, cfg))
                 results.append(item)
             write_json(analysis_root / "replica_mmgbsa_status.json", results)
             combined = _combined_outputs(results, analysis_root, cfg, style, plot_selection)
@@ -472,18 +498,31 @@ def run_mmgbsa_postprocess(
             if parsed_count > 0:
                 status = "ok"
                 detail = f"Completed MM/GBSA for {parsed_count}/{replica_count} replicas"
-            elif status_counts.get("skipped_missing_inputs", 0) == replica_count:
-                status = "skipped_missing_inputs"
-                detail = f"Skipped MM/GBSA: Amber inputs were missing in all {replica_count} replicas"
-            elif status_counts.get("skipped_missing_binary", 0) == replica_count:
-                status = "skipped_missing_binary"
-                detail = "Skipped MM/GBSA: MMPBSA.py was not available"
-            elif status_counts.get("failed", 0) > 0:
-                status = "failed"
-                detail = f"MM/GBSA failed in {status_counts['failed']}/{replica_count} replicas and produced no summary tables"
             else:
-                status = "skipped_or_failed"
-                detail = "MM/GBSA produced no usable outputs"
+                reused = _load_existing_replica_results(analysis_root, cfg)
+                if reused:
+                    write_json(analysis_root / "replica_mmgbsa_status.json", reused)
+                    combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
+                    return {
+                        "analysis_root": str(Path(analysis_root).resolve()),
+                        "replica_results": reused,
+                        "combined": combined,
+                        "status_counts": {"reused_existing_outputs": len(reused)},
+                        "status": "ok",
+                        "detail": f"Reused existing MM/GBSA outputs for {len(reused)} replicas after auto-run produced no parsed results",
+                    }
+                if status_counts.get("skipped_missing_inputs", 0) == replica_count:
+                    status = "skipped_missing_inputs"
+                    detail = f"Skipped MM/GBSA: Amber inputs were missing in all {replica_count} replicas"
+                elif status_counts.get("skipped_missing_binary", 0) == replica_count:
+                    status = "skipped_missing_binary"
+                    detail = "Skipped MM/GBSA: MMPBSA.py was not available"
+                elif status_counts.get("failed", 0) > 0:
+                    status = "failed"
+                    detail = f"MM/GBSA failed in {status_counts['failed']}/{replica_count} replicas and produced no summary tables"
+                else:
+                    status = "skipped_or_failed"
+                    detail = "MM/GBSA produced no usable outputs"
             return {
                 "analysis_root": str(Path(analysis_root).resolve()),
                 "replica_results": results,
@@ -491,6 +530,18 @@ def run_mmgbsa_postprocess(
                 "status_counts": status_counts,
                 "status": status,
                 "detail": detail,
+            }
+        reused = _load_existing_replica_results(analysis_root, cfg)
+        if reused:
+            write_json(analysis_root / "replica_mmgbsa_status.json", reused)
+            combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
+            return {
+                "analysis_root": str(Path(analysis_root).resolve()),
+                "replica_results": reused,
+                "combined": combined,
+                "status_counts": {"reused_existing_outputs": len(reused)},
+                "status": "ok",
+                "detail": f"Reused existing MM/GBSA outputs for {len(reused)} replicas",
             }
 
     outputs = _single_root_existing_files(cfg, style, plot_selection)
