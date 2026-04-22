@@ -197,17 +197,34 @@ def _attach_production_reporters(simulation: Simulation, out_dir: Path, cfg: Run
     )
 
 
-def _try_export_amber_artifacts(out_dir: Path, dry_modeller, dry_system, solvated_modeller, solvated_system) -> dict[str, str]:
+def _try_export_amber_artifacts(
+    out_dir: Path,
+    dry_modeller,
+    dry_system,
+    solvated_modeller,
+    solvated_system,
+) -> tuple[dict[str, str], str | None]:
     try:
         import parmed as pmd
+        from parmed.tools.actions import changeRadii
         import mdtraj as md
-    except Exception:
-        return {}
+    except Exception as exc:
+        return {}, f"Amber artifact export prerequisites are unavailable: {exc}"
 
     outputs: dict[str, str] = {}
+
+    def _apply_gb_radii(prmtop_path: Path, radii_set: str = "mbondi2") -> None:
+        # Amber GB calculations require populated RADII/SCREEN tables.
+        parm = pmd.load_file(str(prmtop_path))
+        changeRadii(parm, radii_set).execute()
+        parm.save(str(prmtop_path), overwrite=True)
+
     try:
         dry_structure = pmd.openmm.load_topology(dry_modeller.topology, dry_system, xyz=dry_modeller.positions)
         solv_structure = pmd.openmm.load_topology(solvated_modeller.topology, solvated_system, xyz=solvated_modeller.positions)
+        for residue in solv_structure.residues:
+            if residue.name == "HOH":
+                residue.name = "WAT"
 
         dry_structure.save(str(out_dir / "complex.prmtop"), overwrite=True)
         dry_structure.save(str(out_dir / "complex.inpcrd"), overwrite=True)
@@ -224,6 +241,11 @@ def _try_export_amber_artifacts(out_dir: Path, dry_modeller, dry_system, solvate
         except Exception:
             pass
 
+        for name in ["complex.prmtop", "receptor.prmtop", "ligand.prmtop"]:
+            path = out_dir / name
+            if path.exists():
+                _apply_gb_radii(path)
+
         dcd_path = out_dir / "trajectory.dcd"
         top_path = out_dir / "system_solvated.pdb"
         if dcd_path.exists() and top_path.exists():
@@ -236,9 +258,11 @@ def _try_export_amber_artifacts(out_dir: Path, dry_modeller, dry_system, solvate
             path = out_dir / name
             if path.exists():
                 outputs[name] = str(path.resolve())
-    except Exception:
-        return outputs
-    return outputs
+    except Exception as exc:
+        return outputs, f"Amber artifact export failed: {exc}"
+    if not outputs:
+        return outputs, "Amber artifact export finished without producing any expected files."
+    return outputs, None
 
 
 def _write_platform_info(out_dir: Path, replica_id: int, platform_info: dict) -> None:
@@ -387,12 +411,35 @@ def run_single_replica(
     save_pdb(simulation.topology, final_state.getPositions(), out_dir / "final_frame.pdb")
     if progress_callback is not None:
         progress_callback(max(total_steps, 1), max(total_steps, 1), "Exporting final structures and Amber artifacts", None)
-    amber_artifacts = _try_export_amber_artifacts(out_dir, dry_modeller, dry_system, modeller, system)
-    return {
+    # Export a second set of Amber-oriented systems without constrained H-bonds
+    # or rigid waters so ParmEd can emit complete bond parameters for prmtop files.
+    dry_system_export = forcefield.createSystem(
+        dry_modeller.topology,
+        nonbondedMethod=NoCutoff,
+        constraints=None,
+    )
+    solvated_system_export = forcefield.createSystem(
+        modeller.topology,
+        nonbondedMethod=PME,
+        nonbondedCutoff=1.0 * nanometer,
+        constraints=None,
+        rigidWater=False,
+    )
+    amber_artifacts, amber_artifact_warning = _try_export_amber_artifacts(
+        out_dir,
+        dry_modeller,
+        dry_system_export,
+        modeller,
+        solvated_system_export,
+    )
+    result = {
         "replica_dir": str(out_dir.resolve()),
         "amber_artifacts": amber_artifacts if amber_artifacts else {},
         "platform": platform_info,
     }
+    if amber_artifact_warning:
+        result["amber_artifact_warning"] = amber_artifact_warning
+    return result
 
 
 def _emit_replica_progress(

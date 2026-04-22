@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 from pathlib import Path
 
@@ -15,7 +16,15 @@ from ...plotting.mmgbsa import (
     plot_mmgbsa_timeseries,
     plot_per_residue_decomp,
 )
-from .parser import infer_numeric_columns, parse_mmpbsa_results, read_csv_rows
+from .parser import (
+    infer_numeric_columns,
+    parse_mmpbsa_decomp_delta_frame_rows,
+    parse_mmpbsa_decomp_summary_rows,
+    parse_mmpbsa_final_results_delta_rows,
+    parse_mmpbsa_results,
+    read_csv_rows,
+    summarize_mmpbsa_decomp_frame_rows,
+)
 
 
 def _pick_time_or_frame(rows, numeric_cols):
@@ -40,6 +49,32 @@ def _binary(name: str) -> str | None:
     return find_binary(name)
 
 
+def _mpi_enabled(cfg: MMGBSAConfig) -> bool:
+    return bool(getattr(cfg, "use_mpi", False)) and max(int(getattr(cfg, "mpi_ranks", 1)), 1) > 1
+
+
+def _resolve_mmgbsa_command(cfg: MMGBSAConfig) -> tuple[list[str] | None, list[str]]:
+    if _mpi_enabled(cfg):
+        launcher = _binary("mpirun") or _binary("mpiexec")
+        binary = _binary("MMPBSA.py.MPI")
+        missing = []
+        if launcher is None:
+            missing.append("mpirun")
+        if binary is None:
+            missing.append("MMPBSA.py.MPI")
+        if importlib.util.find_spec("mpi4py") is None:
+            missing.append("mpi4py")
+        if missing:
+            return None, missing
+        ranks = max(int(getattr(cfg, "mpi_ranks", 1)), 1)
+        return [launcher, "-np", str(ranks), binary], []
+
+    binary = _binary("MMPBSA.py") or _binary("MMPBSA.py.MPI")
+    if not binary:
+        return None, ["MMPBSA.py"]
+    return [binary], []
+
+
 def _write_default_input(path: Path, cfg: MMGBSAConfig) -> Path:
     text = (
         "&general\n"
@@ -48,10 +83,13 @@ def _write_default_input(path: Path, cfg: MMGBSAConfig) -> Path:
         "&gb\n"
         f"  igb={int(cfg.igb)}, saltcon={float(cfg.saltcon):.3f},\n"
         "/\n"
-        "&decomp\n"
-        f"  idecomp={int(cfg.idecomp)}, dec_verbose=0,\n"
-        "/\n"
     )
+    if int(cfg.idecomp) > 0:
+        text += (
+            "&decomp\n"
+            f"  idecomp={int(cfg.idecomp)}, dec_verbose=0,\n"
+            "/\n"
+        )
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -63,19 +101,19 @@ def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str
 
 def _auto_run_replica(replica_dir: Path, out_dir: Path, cfg: MMGBSAConfig) -> dict:
     required = {
-        "complex_solvated_prmtop": replica_dir / cfg.complex_solvated_prmtop,
-        "complex_prmtop": replica_dir / cfg.complex_prmtop,
-        "receptor_prmtop": replica_dir / cfg.receptor_prmtop,
-        "ligand_prmtop": replica_dir / cfg.ligand_prmtop,
-        "trajectory_nc": replica_dir / cfg.trajectory_nc,
+        "complex_solvated_prmtop": replica_dir / Path(cfg.complex_solvated_prmtop).name,
+        "complex_prmtop": replica_dir / Path(cfg.complex_prmtop).name,
+        "receptor_prmtop": replica_dir / Path(cfg.receptor_prmtop).name,
+        "ligand_prmtop": replica_dir / Path(cfg.ligand_prmtop).name,
+        "trajectory_nc": replica_dir / Path(cfg.trajectory_nc).name,
     }
     missing = [name for name, path in required.items() if not path.exists()]
     if missing:
         return {"status": "skipped_missing_inputs", "missing": missing}
 
-    binary = _binary("MMPBSA.py") or _binary("MMPBSA.py.MPI")
-    if not binary:
-        return {"status": "skipped_missing_binary", "missing": ["MMPBSA.py"]}
+    command_prefix, missing = _resolve_mmgbsa_command(cfg)
+    if command_prefix is None:
+        return {"status": "skipped_missing_binary", "missing": missing}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     input_file = out_dir / Path(cfg.mmpbsa_input_file).name
@@ -83,11 +121,12 @@ def _auto_run_replica(replica_dir: Path, out_dir: Path, cfg: MMGBSAConfig) -> di
 
     final_dat = out_dir / Path(cfg.final_dat).name
     final_csv = out_dir / Path(cfg.final_csv).name
+    decomp_enabled = int(cfg.idecomp) > 0
     decomp_dat = out_dir / Path(cfg.per_residue_dat).name
     decomp_csv = out_dir / Path(cfg.per_residue_csv).name
 
     args = [
-        binary,
+        *command_prefix,
         "-O",
         "-i", str(input_file),
         "-sp", str(required["complex_solvated_prmtop"]),
@@ -97,22 +136,28 @@ def _auto_run_replica(replica_dir: Path, out_dir: Path, cfg: MMGBSAConfig) -> di
         "-y", str(required["trajectory_nc"]),
         "-o", str(final_dat),
         "-eo", str(final_csv),
-        "-do", str(decomp_dat),
-        "-deo", str(decomp_csv),
     ]
+    if decomp_enabled:
+        args.extend([
+            "-do", str(decomp_dat),
+            "-deo", str(decomp_csv),
+        ])
     code, stdout, stderr = _run_command(args, cwd=str(out_dir))
+    output_paths = {
+        "final_dat": str(final_dat),
+        "final_csv": str(final_csv),
+    }
+    if decomp_enabled:
+        output_paths["per_residue_dat"] = str(decomp_dat)
+        output_paths["per_residue_csv"] = str(decomp_csv)
     result = {
         "status": "ok" if code == 0 else "failed",
+        "used_mpi": _mpi_enabled(cfg),
         "command": args,
         "stdout": stdout,
         "stderr": stderr,
         "returncode": code,
-        "outputs": {
-            "final_dat": str(final_dat),
-            "final_csv": str(final_csv),
-            "per_residue_dat": str(decomp_dat),
-            "per_residue_csv": str(decomp_csv),
-        },
+        "outputs": output_paths,
     }
     return result
 
@@ -132,7 +177,9 @@ def _parse_per_frame(replica_out_dir: Path, cfg: MMGBSAConfig):
     path = replica_out_dir / Path(cfg.final_csv).name
     if not path.exists():
         return None
-    rows = read_csv_rows(path)
+    rows = parse_mmpbsa_final_results_delta_rows(path)
+    if not rows:
+        rows = read_csv_rows(path)
     if not rows:
         return None
     numeric_cols = infer_numeric_columns(rows)
@@ -142,38 +189,87 @@ def _parse_per_frame(replica_out_dir: Path, cfg: MMGBSAConfig):
     energy_col = _pick_energy_column(rows, numeric_cols)
     if not time_col or not energy_col:
         return None
-    try:
-        x = [float(r[time_col]) for r in rows]
-        y = [float(r[energy_col]) for r in rows]
-    except Exception:
+    x = []
+    y = []
+    for row in rows:
+        try:
+            x_value = float(row[time_col])
+            y_value = float(row[energy_col])
+        except Exception:
+            continue
+        if not (np.isfinite(x_value) and np.isfinite(y_value)):
+            continue
+        x.append(x_value)
+        y.append(y_value)
+    if not x or not y:
         return None
     return {"x": x, "y": y, "xlabel": time_col, "energy_col": energy_col}
 
 
 def _parse_per_residue(replica_out_dir: Path, cfg: MMGBSAConfig):
-    path = replica_out_dir / Path(cfg.per_residue_csv).name
-    if not path.exists():
+    dat_path = replica_out_dir / Path(cfg.per_residue_dat).name
+    if dat_path.exists():
+        rows = parse_mmpbsa_decomp_summary_rows(dat_path)
+        parsed = []
+        for row in rows:
+            try:
+                value = float(row.get("total_avg", float("nan")))
+            except Exception:
+                continue
+            if not np.isfinite(value):
+                continue
+            parsed.append({"label": str(row.get("residue", "")).strip(), "value": value})
+        if parsed:
+            return parsed
+
+    csv_path = replica_out_dir / Path(cfg.per_residue_csv).name
+    if not csv_path.exists():
         return None
-    rows = read_csv_rows(path)
-    if not rows:
-        return None
-    numeric_cols = infer_numeric_columns(rows)
-    if not numeric_cols:
-        return None
-    keys = list(rows[0].keys())
-    text_col = keys[0]
-    target = _pick_energy_column(rows, numeric_cols)
-    if not target:
-        return None
-    parsed = []
-    for row in rows:
-        label = row.get(text_col, "")
-        try:
-            value = float(row.get(target, ""))
-        except Exception:
-            continue
-        parsed.append({"label": label, "value": value})
-    return parsed or None
+    summary_rows = summarize_mmpbsa_decomp_frame_rows(parse_mmpbsa_decomp_delta_frame_rows(csv_path))
+    if not summary_rows:
+        rows = read_csv_rows(csv_path)
+        if not rows:
+            return None
+        numeric_cols = infer_numeric_columns(rows)
+        if not numeric_cols:
+            return None
+        keys = list(rows[0].keys())
+        text_col = keys[0]
+        target = _pick_energy_column(rows, numeric_cols)
+        if not target:
+            return None
+        parsed = []
+        for row in rows:
+            label = row.get(text_col, "")
+            try:
+                value = float(row.get(target, ""))
+            except Exception:
+                continue
+            if not np.isfinite(value):
+                continue
+            parsed.append({"label": label, "value": value})
+        return parsed or None
+    return [{"label": str(row["label"]), "value": float(row["mean_kcal_mol"])} for row in summary_rows]
+
+
+def summarize_mmgbsa_postprocess_result(result: dict | None) -> str:
+    if not result:
+        return "MM/GBSA postprocess completed without a result payload"
+    detail = str(result.get("detail", "")).strip()
+    if detail:
+        return detail
+    status = str(result.get("status", "")).strip()
+    if status == "ok":
+        return "Completed MM/GBSA postprocess"
+    if status == "skipped_missing_inputs":
+        return "Skipped MM/GBSA because Amber inputs were not found"
+    if status == "skipped_missing_binary":
+        return "Skipped MM/GBSA because MMPBSA.py was not available"
+    if status == "failed":
+        return "MM/GBSA postprocess failed"
+    if status == "skipped_or_failed":
+        return "MM/GBSA postprocess produced no usable outputs"
+    return "Completed MM/GBSA postprocess"
 
 
 def _combined_outputs(
@@ -199,11 +295,14 @@ def _combined_outputs(
         if item.get("summary_rows"):
             delta = next((r for r in item["summary_rows"] if r.get("term") == "DELTA TOTAL"), None)
             if delta:
-                summary_rows.append({
-                    "replica": name,
-                    "mean_kcal_mol": float(delta["mean_kcal_mol"]),
-                    "sd_kcal_mol": float(delta.get("sd_kcal_mol", 0.0)),
-                })
+                mean_value = float(delta["mean_kcal_mol"])
+                sd_value = float(delta.get("sd_kcal_mol", 0.0))
+                if np.isfinite(mean_value):
+                    summary_rows.append({
+                        "replica": name,
+                        "mean_kcal_mol": mean_value,
+                        "sd_kcal_mol": sd_value if np.isfinite(sd_value) else 0.0,
+                    })
         if item.get("per_frame"):
             pf = item["per_frame"]
             time_map[name] = pf["y"]
@@ -258,48 +357,86 @@ def _single_root_existing_files(
     plot_per_residue = plot_selection is None or plot_selection.enabled("mmgbsa_per_residue")
     outputs = {}
     summary_csv = None
+    summary_rows = None
     if str(cfg.final_dat).strip() and Path(cfg.final_dat).exists():
         summary_csv = parse_mmpbsa_results(cfg.final_dat, analysis_root / "mmpbsa_summary_parsed.csv")
-    elif str(cfg.final_csv).strip() and Path(cfg.final_csv).exists():
-        rows = read_csv_rows(cfg.final_csv)
-        if rows and {"term", "mean_kcal_mol"}.issubset(rows[0].keys()):
-            summary_csv = Path(cfg.final_csv)
     if summary_csv and Path(summary_csv).exists():
-        rows = read_csv_rows(summary_csv)
-        if rows:
-            write_dict_csv(analysis_root / "mmpbsa_summary.csv", rows, list(rows[0].keys()))
+        summary_rows = read_csv_rows(summary_csv)
+        if summary_rows:
+            write_dict_csv(analysis_root / "mmpbsa_summary.csv", summary_rows, list(summary_rows[0].keys()))
             if plot_summary:
-                plot_mmgbsa_summary(rows, analysis_root / "mmgbsa_summary", style)
-            outputs["summary_csv"] = str(Path(summary_csv).resolve())
+                plot_mmgbsa_summary(summary_rows, analysis_root / "mmgbsa_summary", style)
+            outputs["summary_csv"] = str((analysis_root / "mmpbsa_summary.csv").resolve())
 
-    if str(cfg.per_frame_csv).strip() and Path(cfg.per_frame_csv).exists():
-        rows = read_csv_rows(cfg.per_frame_csv)
+    per_frame_path = None
+    if str(cfg.final_csv).strip() and Path(cfg.final_csv).exists():
+        per_frame_path = Path(cfg.final_csv)
+    elif str(cfg.per_frame_csv).strip() and Path(cfg.per_frame_csv).exists():
+        per_frame_path = Path(cfg.per_frame_csv)
+    if per_frame_path is not None and per_frame_path.exists():
+        rows = parse_mmpbsa_final_results_delta_rows(per_frame_path)
+        if not rows and str(cfg.per_frame_csv).strip() and Path(cfg.per_frame_csv).exists():
+            rows = read_csv_rows(cfg.per_frame_csv)
         if rows:
             numeric_cols = infer_numeric_columns(rows)
             time_col = _pick_time_or_frame(rows, numeric_cols)
             if time_col:
-                x = [float(r[time_col]) for r in rows]
+                x = []
                 value_cols = [c for c in numeric_cols if c != time_col][:6]
-                value_map = {col: [float(r[col]) for r in rows] for col in value_cols}
-                if value_map:
+                value_map = {col: [] for col in value_cols}
+                for row in rows:
+                    try:
+                        time_value = float(row[time_col])
+                    except Exception:
+                        continue
+                    candidate_values: dict[str, float] = {}
+                    valid = np.isfinite(time_value)
+                    for col in value_cols:
+                        try:
+                            candidate_values[col] = float(row[col])
+                        except Exception:
+                            valid = False
+                            break
+                        if not np.isfinite(candidate_values[col]):
+                            valid = False
+                            break
+                    if not valid:
+                        continue
+                    x.append(time_value)
+                    for col, value in candidate_values.items():
+                        value_map[col].append(value)
+                value_map = {col: values for col, values in value_map.items() if values}
+                if x and value_map:
+                    parsed_per_frame_csv = analysis_root / "mmpbsa_per_frame_delta.csv"
+                    write_dict_csv(parsed_per_frame_csv, rows, list(rows[0].keys()))
                     if plot_per_frame:
                         plot_mmgbsa_timeseries(x, value_map, analysis_root / "mmgbsa_per_frame", style, title="MM/GBSA per-frame energies", xlabel=time_col)
-                    outputs["per_frame_csv"] = str(Path(cfg.per_frame_csv).resolve())
+                    outputs["per_frame_csv"] = str(parsed_per_frame_csv.resolve())
 
-    if str(cfg.per_residue_csv).strip() and Path(cfg.per_residue_csv).exists():
-        rows = read_csv_rows(cfg.per_residue_csv)
-        if rows:
-            keys = list(rows[0].keys())
-            text_col = keys[0]
-            numeric_cols = infer_numeric_columns(rows)
-            target_col = _pick_energy_column(rows, numeric_cols)
-            if target_col:
-                trimmed = sorted(rows, key=lambda r: abs(float(r[target_col])), reverse=True)[: cfg.top_n_residues_plot]
-                labels = [r[text_col] for r in trimmed]
-                values = [float(r[target_col]) for r in trimmed]
-                if plot_per_residue:
-                    plot_per_residue_decomp(labels, values, analysis_root / "mmgbsa_per_residue", style)
-                outputs["per_residue_csv"] = str(Path(cfg.per_residue_csv).resolve())
+    residue_rows = []
+    if str(cfg.per_residue_dat).strip() and Path(cfg.per_residue_dat).exists():
+        residue_rows = [
+            {
+                "label": str(row["residue"]),
+                "location": str(row["location"]),
+                "mean_kcal_mol": float(row["total_avg"]),
+                "sd_kcal_mol": float(row["total_sd"]),
+                "sem_kcal_mol": float(row["total_sem"]),
+            }
+            for row in parse_mmpbsa_decomp_summary_rows(cfg.per_residue_dat)
+            if np.isfinite(float(row["total_avg"]))
+        ]
+    elif str(cfg.per_residue_csv).strip() and Path(cfg.per_residue_csv).exists():
+        residue_rows = summarize_mmpbsa_decomp_frame_rows(parse_mmpbsa_decomp_delta_frame_rows(cfg.per_residue_csv))
+    if residue_rows:
+        parsed_per_residue_csv = analysis_root / "mmpbsa_per_residue_summary.csv"
+        write_dict_csv(parsed_per_residue_csv, residue_rows, list(residue_rows[0].keys()))
+        trimmed = sorted(residue_rows, key=lambda r: abs(float(r["mean_kcal_mol"])), reverse=True)[: cfg.top_n_residues_plot]
+        labels = [str(r["label"]) for r in trimmed]
+        values = [float(r["mean_kcal_mol"]) for r in trimmed]
+        if plot_per_residue:
+            plot_per_residue_decomp(labels, values, analysis_root / "mmgbsa_per_residue", style)
+        outputs["per_residue_csv"] = str(parsed_per_residue_csv.resolve())
     outputs["analysis_root"] = str(Path(analysis_root).resolve())
     return outputs
 
@@ -326,11 +463,38 @@ def run_mmgbsa_postprocess(
                 results.append(item)
             write_json(analysis_root / "replica_mmgbsa_status.json", results)
             combined = _combined_outputs(results, analysis_root, cfg, style, plot_selection)
+            replica_count = len(results)
+            parsed_count = sum(1 for r in results if r.get("summary_rows"))
+            status_counts: dict[str, int] = {}
+            for item in results:
+                run_status = str(item.get("run", {}).get("status", "unknown"))
+                status_counts[run_status] = status_counts.get(run_status, 0) + 1
+            if parsed_count > 0:
+                status = "ok"
+                detail = f"Completed MM/GBSA for {parsed_count}/{replica_count} replicas"
+            elif status_counts.get("skipped_missing_inputs", 0) == replica_count:
+                status = "skipped_missing_inputs"
+                detail = f"Skipped MM/GBSA: Amber inputs were missing in all {replica_count} replicas"
+            elif status_counts.get("skipped_missing_binary", 0) == replica_count:
+                status = "skipped_missing_binary"
+                detail = "Skipped MM/GBSA: MMPBSA.py was not available"
+            elif status_counts.get("failed", 0) > 0:
+                status = "failed"
+                detail = f"MM/GBSA failed in {status_counts['failed']}/{replica_count} replicas and produced no summary tables"
+            else:
+                status = "skipped_or_failed"
+                detail = "MM/GBSA produced no usable outputs"
             return {
                 "analysis_root": str(Path(analysis_root).resolve()),
                 "replica_results": results,
                 "combined": combined,
-                "status": "ok" if any(r.get("summary_rows") for r in results) else "skipped_or_failed",
+                "status_counts": status_counts,
+                "status": status,
+                "detail": detail,
             }
 
-    return _single_root_existing_files(cfg, style, plot_selection)
+    outputs = _single_root_existing_files(cfg, style, plot_selection)
+    usable_keys = {k for k in outputs.keys() if k != "analysis_root"}
+    outputs["status"] = "ok" if usable_keys else "skipped_or_failed"
+    outputs["detail"] = "Completed MM/GBSA postprocess" if usable_keys else "MM/GBSA postprocess produced no usable outputs"
+    return outputs

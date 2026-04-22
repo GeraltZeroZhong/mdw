@@ -119,6 +119,8 @@
     "source_root": "work/md",
     "auto_run": true,
     "non_blocking": true,
+    "use_mpi": false,
+    "mpi_ranks": 4,
     "mmpbsa_input_file": "mmpbsa.in",
     "complex_solvated_prmtop": "complex_solvated.prmtop",
     "complex_prmtop": "complex.prmtop",

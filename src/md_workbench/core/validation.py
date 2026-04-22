@@ -254,6 +254,10 @@ def preflight_validate_existing_results(cfg: WorkflowConfig) -> ValidationResult
         if message not in errors:
             errors.append(message)
 
+    def add_warning(message: str) -> None:
+        if message not in warnings:
+            warnings.append(message)
+
     def _require_replica_files(replica_root: str, replica_glob: str, required_files: list[str], label: str) -> None:
         replica_dirs = resolve_replica_dirs(replica_root, replica_glob)
         if not replica_dirs:
@@ -293,5 +297,33 @@ def preflight_validate_existing_results(cfg: WorkflowConfig) -> ValidationResult
             [cfg.advanced.top_name, cfg.advanced.traj_name],
             "Advanced analysis",
         )
+
+    if cfg.do_mmgbsa_postprocess and cfg.mmgbsa.auto_run:
+        replica_dirs = resolve_replica_dirs(cfg.mmgbsa.source_root, "replica_*")
+        required = [
+            Path(cfg.mmgbsa.complex_solvated_prmtop).name,
+            Path(cfg.mmgbsa.complex_prmtop).name,
+            Path(cfg.mmgbsa.receptor_prmtop).name,
+            Path(cfg.mmgbsa.ligand_prmtop).name,
+            Path(cfg.mmgbsa.trajectory_nc).name,
+        ]
+        if replica_dirs:
+            missing_by_replica = []
+            for replica_dir in replica_dirs:
+                missing = []
+                for name in required:
+                    path = replica_dir / name
+                    if not path.exists() or (path.is_file() and path.stat().st_size <= 0):
+                        missing.append(name)
+                if missing:
+                    missing_by_replica.append(f"{replica_dir.name}: {', '.join(missing)}")
+            if missing_by_replica:
+                preview = "; ".join(missing_by_replica[:3])
+                if len(missing_by_replica) > 3:
+                    preview = f"{preview}; ..."
+                add_warning(
+                    "MM/GBSA auto-run is enabled for existing results, but Amber-style inputs are missing, "
+                    f"so MM/GBSA will be skipped. {preview}"
+                )
 
     return ValidationResult(errors=errors, warnings=warnings)

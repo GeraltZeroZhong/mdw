@@ -400,7 +400,7 @@ ADVANCED_FIELD_GROUPS = {
         {
             "title": "Execution",
             "hint": "Choose whether MM/GBSA runs automatically and whether failures should remain non-blocking.",
-            "fields": ["analysis_root", "source_root", "auto_run", "non_blocking", "startframe", "interval", "igb", "saltcon", "idecomp"],
+            "fields": ["analysis_root", "source_root", "auto_run", "non_blocking", "use_mpi", "mpi_ranks", "startframe", "interval", "igb", "saltcon", "idecomp"],
         },
         {
             "title": "Input Files",
