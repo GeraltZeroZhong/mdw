@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import FancyArrowPatch
+from matplotlib.ticker import PercentFormatter
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.ndimage import binary_dilation, gaussian_filter, minimum_filter
 from scipy.stats import gaussian_kde
@@ -448,8 +449,117 @@ def plot_cluster_population(clusters, fractions, out_base, style: PlotStyleConfi
     vertical_bars(clusters, fractions, out_base, style, title="Overall cluster populations", xlabel="Cluster", ylabel="Population fraction")
 
 
-def plot_stationary_distribution(states, probs, out_base, style: PlotStyleConfig):
-    vertical_bars(states, probs, out_base, style, title="MSM stationary distribution", xlabel="MSM state", ylabel="Stationary probability")
+def _coerce_state_labels(state_labels, n_states: int) -> list[str]:
+    if state_labels is None:
+        return [f"State {idx}" for idx in range(n_states)]
+    labels = [str(item).strip() for item in state_labels]
+    if len(labels) != n_states or any(not label for label in labels):
+        return [f"State {idx}" for idx in range(n_states)]
+    return labels
+
+
+def _state_colors(n_states: int, style: PlotStyleConfig) -> list[str]:
+    repeats = int(np.ceil(max(n_states, 1) / len(style.categorical_palette)))
+    return (style.categorical_palette * repeats)[:n_states]
+
+
+def _as_real_array(values) -> np.ndarray:
+    return np.asarray(np.real_if_close(values), dtype=float)
+
+
+def _summary_box(ax, lines, style: PlotStyleConfig, *, loc: str = "upper right") -> None:
+    if not lines:
+        return
+    x = 0.98 if "right" in loc else 0.02
+    ha = "right" if "right" in loc else "left"
+    y = 0.98 if "upper" in loc else 0.02
+    va = "top" if "upper" in loc else "bottom"
+    ax.text(
+        x,
+        y,
+        "\n".join(str(line) for line in lines if str(line).strip()),
+        transform=ax.transAxes,
+        ha=ha,
+        va=va,
+        fontsize=max(style.tick_size - 0.7, 6.8),
+        color=style.spine_color,
+        bbox=dict(boxstyle="round,pad=0.32", facecolor="white", edgecolor=style.grid_color, linewidth=0.8, alpha=0.94),
+        zorder=10,
+    )
+
+
+def _format_frame_value(value: float) -> str:
+    value = float(value)
+    if not np.isfinite(value):
+        return "nan"
+    if value >= 1000:
+        return f"{value:,.0f}"
+    if value >= 100:
+        return f"{value:.0f}"
+    if value >= 10:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
+def _top_offdiagonal_edges(transition_matrix, flux_matrix=None, limit: int = 8):
+    T = _as_real_array(transition_matrix)
+    flux = None if flux_matrix is None else _as_real_array(flux_matrix)
+    rows = []
+    for i in range(T.shape[0]):
+        for j in range(T.shape[1]):
+            if i == j or not np.isfinite(T[i, j]) or T[i, j] <= 0.0:
+                continue
+            metric = float(flux[i, j]) if flux is not None and np.isfinite(flux[i, j]) else float(T[i, j])
+            rows.append((i, j, float(T[i, j]), metric))
+    rows.sort(key=lambda item: (item[3], item[2], -item[0], -item[1]), reverse=True)
+    return rows[:limit]
+
+
+def plot_stationary_distribution(states, probs, out_base, style: PlotStyleConfig, state_labels=None, summary_lines=None):
+    probs_arr = _as_real_array(probs)
+    if probs_arr.size == 0:
+        return
+    labels = _coerce_state_labels(state_labels, probs_arr.size)
+    order = np.argsort(probs_arr)[::-1]
+    ordered_probs = probs_arr[order]
+    ordered_labels = [labels[idx] for idx in order]
+    colors = [_state_colors(len(labels), style)[idx] for idx in order]
+    y = np.arange(len(ordered_probs))
+    height = max(3.2, 0.58 * len(ordered_probs) + 1.8)
+    uniform_prob = 1.0 / max(len(ordered_probs), 1)
+
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=(7.6, height))
+        for idx in range(len(ordered_probs)):
+            if idx % 2 == 0:
+                ax.axhspan(idx - 0.5, idx + 0.5, color="#F8FAFC", zorder=0)
+        ax.barh(y, ordered_probs, height=0.68, color=colors, alpha=0.18, edgecolor="none", zorder=1)
+        ax.hlines(y, 0.0, ordered_probs, color=colors, linewidth=2.2, alpha=0.65, zorder=2)
+        ax.scatter(ordered_probs, y, s=max(style.marker_size * 26.0, 52.0), color=colors, edgecolors="white", linewidths=1.0, zorder=3)
+        ax.axvline(uniform_prob, linestyle="--", linewidth=1.0, color=style.mean_line_color, alpha=0.55, zorder=1)
+        for ypos, prob in zip(y, ordered_probs):
+            ax.annotate(
+                f"{prob:.1%}",
+                xy=(prob, ypos),
+                xytext=(8, 0),
+                textcoords="offset points",
+                va="center",
+                ha="left",
+                fontsize=max(style.tick_size - 0.1, 7.1),
+                color=style.spine_color,
+                zorder=4,
+            )
+        ax.set_yticks(y)
+        ax.set_yticklabels(ordered_labels)
+        ax.invert_yaxis()
+        ax.set_xlim(0.0, min(1.02, max(0.40, float(np.nanmax(ordered_probs)) * 1.18)))
+        ax.xaxis.set_major_formatter(PercentFormatter(1.0))
+        finalize_axes(ax, style, xlabel="Stationary probability", title="MSM stationary-state occupancy")
+        ax.grid(True, axis="x", linestyle="-", linewidth=0.7)
+        ax.grid(False, axis="y")
+        if summary_lines:
+            _summary_box(ax, summary_lines, style, loc="upper right")
+        save_figure(fig, out_base, style)
 
 
 def _format_probability(value: float) -> str:
@@ -464,22 +574,80 @@ def _format_probability(value: float) -> str:
     return text.rstrip("0").rstrip(".")
 
 
-def plot_lag_scan(lag_rows, out_base, style: PlotStyleConfig):
+def plot_lag_scan(lag_rows, out_base, style: PlotStyleConfig, selected_lag: int | None = None, diagnostic_rows=None):
     arr = np.asarray(lag_rows, dtype=float)
+    if arr.size == 0:
+        return
     with publication_style(style):
-        fig, ax = plt.subplots(figsize=(6.5, 4.7))
+        if diagnostic_rows:
+            fig = plt.figure(figsize=(9.8, 5.2))
+            gs = fig.add_gridspec(2, 2, width_ratios=[2.5, 1.05], height_ratios=[1.0, 1.0], wspace=0.32, hspace=0.42)
+            ax = fig.add_subplot(gs[:, 0])
+            ax_segments = fig.add_subplot(gs[0, 1])
+            ax_frames = fig.add_subplot(gs[1, 1])
+        else:
+            fig, ax = plt.subplots(figsize=(7.4, 4.9))
+            ax_segments = None
+            ax_frames = None
+
         for proc in sorted(set(arr[:, 1].astype(int))):
             sub = arr[arr[:, 1] == proc]
+            sub = sub[np.argsort(sub[:, 0])]
             color = style.categorical_palette[(proc - 1) % len(style.categorical_palette)]
-            ax.plot(sub[:, 0], sub[:, 2], marker="o", markersize=style.marker_size, linewidth=style.line_width, label=f"Process {proc}", color=color)
+            ax.plot(
+                sub[:, 0],
+                sub[:, 2],
+                marker="o",
+                markersize=max(style.marker_size - 0.2, 3.8),
+                linewidth=style.line_width,
+                label=f"Process {proc}",
+                color=color,
+            )
         x0, x1 = float(arr[:, 0].min()), float(arr[:, 0].max())
-        ax.plot([x0, x1], [x0, x1], linestyle="--", linewidth=1.0, color=style.mean_line_color, alpha=0.7)
-        finalize_axes(ax, style, xlabel="MSM lag time (frames)", ylabel="Implied timescale (frames)", title="Implied timescales vs lag")
-        ax.legend(frameon=False, ncol=1)
+        xref = np.linspace(x0, x1, 200)
+        ax.plot(xref, xref, linestyle="--", linewidth=1.0, color=style.mean_line_color, alpha=0.72, label="t = lag")
+        if selected_lag is not None:
+            ax.axvline(float(selected_lag), linestyle=":", linewidth=1.0, color=style.spine_color, alpha=0.7)
+        ax.set_yscale("log")
+        finalize_axes(
+            ax,
+            style,
+            xlabel="MSM lag time (frames)",
+            ylabel="Implied timescale (frames)",
+            title="Implied timescales on a fixed active-state set",
+        )
+        ax.legend(frameon=False, ncol=1, loc="best")
+
+        if diagnostic_rows and ax_segments is not None and ax_frames is not None:
+            diag = np.asarray(diagnostic_rows, dtype=float)
+            order = np.argsort(diag[:, 0])
+            diag = diag[order]
+            lags = diag[:, 0]
+            usable_segments = diag[:, 2]
+            usable_frame_fraction = np.divide(diag[:, 3], np.maximum(diag[:, 4], 1.0))
+
+            ax_segments.bar(lags, usable_segments, width=np.maximum(1.5, lags * 0.22), color=style.protein_color, alpha=0.84)
+            finalize_axes(ax_segments, style, xlabel="Lag", ylabel="Segments", title="Usable active segments")
+            ax_segments.set_xticks(lags)
+
+            ax_frames.bar(lags, usable_frame_fraction, width=np.maximum(1.5, lags * 0.22), color=style.distance_color, alpha=0.84)
+            ax_frames.set_ylim(0.0, 1.0)
+            ax_frames.xaxis.set_ticks(lags)
+            ax_frames.yaxis.set_major_formatter(PercentFormatter(1.0))
+            finalize_axes(ax_frames, style, xlabel="Lag", ylabel="Frame fraction", title="Usable-frame support")
         save_figure(fig, out_base, style)
 
 
-def plot_state_network(transition_matrix, stationary_probs, out_base, style: PlotStyleConfig, threshold: float = 1e-6):
+def plot_state_network(
+    transition_matrix,
+    stationary_probs,
+    out_base,
+    style: PlotStyleConfig,
+    threshold: float = 1e-6,
+    state_labels=None,
+    mfpt_matrix=None,
+    summary_lines=None,
+):
     T = np.asarray(transition_matrix, dtype=float)
     pi = np.asarray(stationary_probs, dtype=float)
     if T.ndim != 2 or T.shape[0] != T.shape[1]:
@@ -523,18 +691,21 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
     max_edge_flux = max((edge[3] for edge in edges), default=0.0)
     edge_pairs = {(i, j) for i, j, _, _ in edges}
 
-    cmap, norm = _categorical_cmap(n, style)
+    labels = _coerce_state_labels(state_labels, n)
+    colors = _state_colors(n, style)
     with publication_style(style):
-        fig, ax = plt.subplots(figsize=(6.3, 6.0))
+        fig, ax = plt.subplots(figsize=(7.2, 5.9))
         for i, j, transition_prob, edge_flux in edges:
             x0, y0 = xy[i]
             x1, y1 = xy[j]
             relative_flux = (edge_flux / max_edge_flux) ** 0.55 if max_edge_flux > 0 else 1.0
             has_reverse = (j, i) in edge_pairs
             if n == 2:
-                curve = 0.24
+                curve = 0.24 if i < j else -0.24
             else:
                 curve = 0.18 if has_reverse else 0.10
+                if i > j and has_reverse:
+                    curve *= -1.0
             patch = FancyArrowPatch(
                 (x0, y0),
                 (x1, y1),
@@ -542,8 +713,8 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
                 connectionstyle=f"arc3,rad={curve}",
                 mutation_scale=11.0 + 5.0 * relative_flux,
                 linewidth=0.75 + 3.2 * relative_flux,
-                color=style.spine_color,
-                alpha=0.34 + 0.50 * relative_flux,
+                color=colors[i % len(colors)],
+                alpha=0.28 + 0.48 * relative_flux,
                 shrinkA=22,
                 shrinkB=22,
                 zorder=2,
@@ -555,10 +726,18 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
                 nx, ny = -dy / dist, dx / dist
                 label_x = (x0 + x1) * 0.5 + nx * curve * 0.42
                 label_y = (y0 + y1) * 0.5 + ny * curve * 0.42
+                mfpt_label = ""
+                if mfpt_matrix is not None:
+                    try:
+                        mfpt_value = float(np.real_if_close(mfpt_matrix[i, j]))
+                        if np.isfinite(mfpt_value):
+                            mfpt_label = f"\nMFPT={_format_frame_value(mfpt_value)}"
+                    except Exception:
+                        pass
                 ax.text(
                     label_x,
                     label_y,
-                    f"P={_format_probability(transition_prob)}",
+                    f"P={_format_probability(transition_prob)}{mfpt_label}",
                     ha="center",
                     va="center",
                     fontsize=max(style.tick_size - 1.3, 7.0),
@@ -568,9 +747,9 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
                 )
 
         sizes = 620.0 + 2300.0 * np.sqrt(pi / pi.max()) if np.max(pi) > 0 else np.full(n, 800.0)
-        ax.scatter(xy[:, 0], xy[:, 1], s=sizes, c=np.arange(n), cmap=cmap, norm=norm, edgecolors="white", linewidths=1.2, zorder=5)
+        ax.scatter(xy[:, 0], xy[:, 1], s=sizes, color=colors, edgecolors="white", linewidths=1.3, zorder=5)
         for i, (x, y) in enumerate(xy):
-            ax.text(x, y, str(i), ha="center", va="center", color="white", fontsize=style.label_size, weight="bold", zorder=6)
+            ax.text(x, y, f"S{i}", ha="center", va="center", color="white", fontsize=style.label_size, weight="bold", zorder=6)
             if n <= 16:
                 if n == 2:
                     label_x, label_y = x, y - 0.35
@@ -581,7 +760,7 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
                 ax.text(
                     label_x,
                     label_y,
-                    f"pi={_format_probability(pi[i])}",
+                    f"{labels[i]}\nπ={_format_probability(pi[i])}",
                     ha="center",
                     va="center",
                     fontsize=max(style.tick_size - 0.8, 7.2),
@@ -590,19 +769,21 @@ def plot_state_network(transition_matrix, stationary_probs, out_base, style: Plo
                 )
         ax.set_aspect("equal")
         if n == 2:
-            ax.set_xlim(-1.25, 1.25)
-            ax.set_ylim(-0.82, 0.86)
+            ax.set_xlim(-1.30, 1.30)
+            ax.set_ylim(-0.96, 0.90)
         else:
             ax.set_xlim(-1.45, 1.45)
             ax.set_ylim(-1.25, 1.25)
         ax.axis("off")
-        ax.set_title("MSM state network", pad=8, weight="semibold")
+        ax.set_title("MSM state-exchange network", pad=8, weight="semibold")
         legend_lines = [
-            "Node area: stationary probability",
-            "Edge width: pi_i P_ij flux",
-            "Edge label: transition probability P_ij",
-            f"Min flux: {_format_probability(used_min_flux)}" + (" (adaptive)" if threshold_relaxed else ""),
+            "Node area scales with stationary probability",
+            "Edge width scales with equilibrium flux π_i P_ij",
+            "Edge labels report P_ij and MFPT when available",
+            f"Flux cutoff: {_format_probability(used_min_flux)}" + (" (adaptive)" if threshold_relaxed else ""),
         ]
+        if summary_lines:
+            legend_lines.extend(str(line) for line in summary_lines if str(line).strip())
         if not edges:
             legend_lines.append("No non-self transitions above cutoff")
         ax.text(
@@ -645,25 +826,137 @@ def plot_state_population_heatmap(replica_names, cluster_labels, matrix, out_bas
     )
 
 
-def plot_transition_matrix_heatmap(transition_matrix, out_base, style: PlotStyleConfig):
+def plot_transition_matrix_heatmap(transition_matrix, out_base, style: PlotStyleConfig, state_labels=None, flux_matrix=None):
     T = np.asarray(transition_matrix, dtype=float)
-    labels = [f"State {i}" for i in range(T.shape[0])]
-    matrix_heatmap(
-        T,
-        labels,
-        labels,
-        out_base,
-        style,
-        title="MSM transition matrix",
-        xlabel="To state",
-        ylabel="From state",
-        vmin=0.0,
-        vmax=1.0,
-        cbar_label="Transition probability",
-        annotate=T.size <= 144,
-        annotation_format="{:.3f}",
-        x_rotation=0.0 if T.shape[0] <= 6 else 30.0,
-    )
+    if T.ndim != 2 or T.shape[0] != T.shape[1]:
+        raise ValueError("MSM transition matrix must be square for heatmap plotting.")
+    labels = _coerce_state_labels(state_labels, T.shape[0])
+    flux = None if flux_matrix is None else _as_real_array(flux_matrix)
+    stay_probs = np.clip(np.diag(T), 0.0, 1.0)
+    leave_probs = np.clip(1.0 - stay_probs, 0.0, 1.0)
+    edge_rows = _top_offdiagonal_edges(T, flux_matrix=flux, limit=min(8, max(T.shape[0] * 2, 4)))
+
+    with publication_style(style):
+        fig = plt.figure(figsize=(10.0, 5.4))
+        gs = fig.add_gridspec(2, 2, width_ratios=[1.28, 1.0], height_ratios=[1.0, 1.0], wspace=0.36, hspace=0.46)
+        ax_matrix = fig.add_subplot(gs[:, 0])
+        ax_edges = fig.add_subplot(gs[0, 1])
+        ax_residence = fig.add_subplot(gs[1, 1])
+
+        mesh = ax_matrix.imshow(T, cmap=style.cmap_continuous, vmin=0.0, vmax=1.0)
+        for iy in range(T.shape[0]):
+            for ix in range(T.shape[1]):
+                value = float(T[iy, ix])
+                text_color = "white" if value >= 0.55 else style.spine_color
+                ax_matrix.text(ix, iy, f"{value:.3f}", ha="center", va="center", fontsize=max(style.tick_size - 0.3, 7.0), color=text_color)
+        ax_matrix.set_xticks(np.arange(T.shape[0]))
+        ax_matrix.set_xticklabels(labels, rotation=0.0 if T.shape[0] <= 4 else 25.0, ha="center")
+        ax_matrix.set_yticks(np.arange(T.shape[0]))
+        ax_matrix.set_yticklabels(labels)
+        finalize_axes(ax_matrix, style, xlabel="To state", ylabel="From state", title="Transition-probability matrix")
+        cbar = fig.colorbar(mesh, ax=ax_matrix, fraction=0.046, pad=0.04)
+        cbar.set_label("Transition probability")
+
+        if edge_rows:
+            bar_labels = [f"{labels[i]} → {labels[j]}" for i, j, _, _ in edge_rows]
+            metric_values = np.asarray([row[3] for row in edge_rows], dtype=float)
+            y = np.arange(len(edge_rows))
+            edge_colors = [_state_colors(len(labels), style)[row[0]] for row in edge_rows]
+            ax_edges.barh(y, metric_values, color=edge_colors, alpha=0.86, edgecolor="white", linewidth=0.8)
+            for ypos, (_, _, transition_prob, metric_value) in zip(y, edge_rows):
+                ax_edges.annotate(
+                    f"P={transition_prob:.3f}",
+                    xy=(metric_value, ypos),
+                    xytext=(6, 0),
+                    textcoords="offset points",
+                    va="center",
+                    ha="left",
+                    fontsize=max(style.tick_size - 0.4, 6.9),
+                    color=style.spine_color,
+                )
+            ax_edges.set_yticks(y)
+            ax_edges.set_yticklabels(bar_labels)
+            ax_edges.invert_yaxis()
+            xlabel = "Equilibrium flux" if flux is not None else "Transition probability"
+            finalize_axes(ax_edges, style, xlabel=xlabel, title="Dominant directed exchange")
+            ax_edges.grid(True, axis="x", linestyle="-", linewidth=0.7)
+            ax_edges.grid(False, axis="y")
+        else:
+            ax_edges.axis("off")
+            ax_edges.text(0.02, 0.5, "No non-self transitions\nabove numerical cutoff.", transform=ax_edges.transAxes, ha="left", va="center")
+
+        y = np.arange(T.shape[0])
+        ax_residence.barh(y, stay_probs, color=style.band_color, alpha=0.95, edgecolor="white", linewidth=0.8, label="Stay")
+        ax_residence.barh(y, leave_probs, left=stay_probs, color=style.accent_color, alpha=0.88, edgecolor="white", linewidth=0.8, label="Leave")
+        for ypos, stay_prob, leave_prob in zip(y, stay_probs, leave_probs):
+            ax_residence.annotate(
+                f"leave {leave_prob:.1%}",
+                xy=(min(stay_prob + leave_prob, 1.0), ypos),
+                xytext=(-6, 0),
+                textcoords="offset points",
+                ha="right",
+                va="center",
+                fontsize=max(style.tick_size - 0.5, 6.8),
+                color=style.spine_color,
+            )
+        ax_residence.set_yticks(y)
+        ax_residence.set_yticklabels(labels)
+        ax_residence.invert_yaxis()
+        ax_residence.set_xlim(0.0, 1.0)
+        ax_residence.xaxis.set_major_formatter(PercentFormatter(1.0))
+        finalize_axes(ax_residence, style, xlabel="Probability mass", title="Residence versus departure")
+        ax_residence.legend(frameon=False, loc="lower right")
+
+        fig.suptitle("MSM transition architecture", y=0.995, weight="semibold")
+        save_figure(fig, out_base, style)
+
+
+def plot_chapman_kolmogorov_test(ck_test, out_base, style: PlotStyleConfig, state_labels=None, summary_lines=None):
+    predictions = _as_real_array(ck_test.predictions)
+    estimates = _as_real_array(ck_test.estimates)
+    lagtimes = np.asarray(ck_test.lagtimes, dtype=float)
+    if predictions.ndim != 3 or estimates.ndim != 3:
+        raise ValueError("CK test predictions/estimates must be 3D arrays.")
+    n_components = predictions.shape[1]
+    labels = _coerce_state_labels(state_labels, n_components)
+
+    with publication_style(style):
+        fig, axes = plt.subplots(
+            n_components,
+            n_components,
+            figsize=(max(6.0, 2.8 * n_components), max(5.2, 2.45 * n_components)),
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+        )
+        for i in range(n_components):
+            for j in range(n_components):
+                ax = axes[i, j]
+                color = style.categorical_palette[(i + j) % len(style.categorical_palette)]
+                ax.plot(lagtimes, predictions[:, i, j], linewidth=style.line_width, color=color, label="Model prediction")
+                ax.scatter(lagtimes, estimates[:, i, j], s=max(style.marker_size * 18.0, 30.0), color=style.mean_line_color, edgecolors="white", linewidths=0.8, zorder=3, label="Independent estimate")
+                ax.set_ylim(-0.02, 1.02)
+                finalize_axes(ax, style)
+                if i == 0:
+                    ax.set_title(f"to {labels[j]}", pad=6)
+                if j == 0:
+                    ax.set_ylabel(f"from {labels[i]}\nProbability")
+                if i == n_components - 1:
+                    ax.set_xlabel("Lag time (frames)")
+                if i == 0 and j == 0:
+                    ax.legend(frameon=False, loc="lower left")
+        fig.suptitle("Chapman-Kolmogorov validation", y=0.995, weight="semibold")
+        if summary_lines:
+            fig.text(
+                0.99,
+                0.01,
+                " | ".join(str(line) for line in summary_lines if str(line).strip()),
+                ha="right",
+                va="bottom",
+                fontsize=max(style.tick_size - 0.8, 6.6),
+                color=style.spine_color,
+            )
+        save_figure(fig, out_base, style)
 
 
 def plot_snapshot_grid(snapshot_entries, out_base, style: PlotStyleConfig, title: str):

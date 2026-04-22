@@ -9,6 +9,7 @@ from ...config import AdvancedAnalysisConfig, PlotSelectionConfig, PlotStyleConf
 from ...core import check_input_file, ensure_dir, require_nonempty_file, resolve_replica_dirs, save_csv, write_json
 from ...core.progress import ProgressCallback, emit_progress
 from ...plotting.advanced import (
+    plot_chapman_kolmogorov_test,
     plot_cluster_population,
     plot_fes,
     plot_lag_scan,
@@ -23,7 +24,7 @@ from ...plotting.advanced import (
 )
 from ..basic.rms import build_average_reference
 from .features import featurize_traj, pick_feature_atoms
-from .msm import MaximumLikelihoodMSM, safe_msm_fit
+from .msm import fit_msm_on_active_symbols, fit_population_connected_msm
 from .projection import build_dtrajs_from_labels, run_clustering, run_pca, run_tica, save_projection_per_replica
 
 
@@ -219,6 +220,42 @@ def _select_snapshot_entries(snapshot_entries, n_show: int):
     return selected
 
 
+def _msm_state_labels(active_symbols: np.ndarray) -> list[str]:
+    symbols = np.asarray(active_symbols, dtype=int).ravel()
+    return [f"S{idx} [C{int(symbol)}]" for idx, symbol in enumerate(symbols)]
+
+
+def _dense_real_array(matrix) -> np.ndarray:
+    if hasattr(matrix, "toarray"):
+        matrix = matrix.toarray()
+    return np.asarray(np.real_if_close(matrix), dtype=float)
+
+
+def _save_labeled_square_csv(path: Path, labels: list[str], matrix) -> None:
+    arr = _dense_real_array(matrix)
+    save_csv(path, ["from\\to"] + labels, [[labels[i], *arr[i].tolist()] for i in range(arr.shape[0])])
+
+
+def _mfpt_matrix(msm) -> np.ndarray:
+    n_states = int(msm.n_states)
+    matrix = np.full((n_states, n_states), np.nan, dtype=float)
+    for i in range(n_states):
+        matrix[i, i] = 0.0
+        for j in range(n_states):
+            if i == j:
+                continue
+            try:
+                matrix[i, j] = float(np.real_if_close(msm.mfpt(i, j)))
+            except Exception:
+                matrix[i, j] = np.nan
+    return matrix
+
+
+def _lag_candidates(base_lag: int, max_segment_length: int) -> list[int]:
+    candidates = {5, 10, 20, 40, 80, int(base_lag), int(base_lag) * 2, int(base_lag) * 4}
+    return sorted(int(lag) for lag in candidates if 1 <= int(lag) < max_segment_length)
+
+
 def run_advanced_analysis(
     cfg: AdvancedAnalysisConfig,
     style: PlotStyleConfig,
@@ -349,25 +386,147 @@ def run_advanced_analysis(
     emit_progress(progress_callback, 7, step_total, "advanced_analysis", "Building exploratory MSM outputs")
     msm_notes = {"warning": "MSM output from short trajectories is exploratory.", "used_safe_tica_lag_frames": safe_tica_lag}
     try:
-        msm, safe_msm_lag, traj_lengths = safe_msm_fit(dtrajs, cfg.msm_lag_frames)
+        msm_fit = fit_population_connected_msm(dtrajs, cfg.msm_lag_frames)
+        msm = msm_fit.model
+        safe_msm_lag = int(msm_fit.safe_lag)
+        traj_lengths = msm_fit.traj_lengths
+        active_symbols = np.asarray(msm_fit.active_symbols, dtype=int)
+        state_labels = _msm_state_labels(active_symbols)
+        state_csv_labels = [f"msm_{idx}_cluster_{int(symbol)}" for idx, symbol in enumerate(active_symbols)]
+        histogram = np.asarray(getattr(msm_fit.counts_full, "state_histogram", []), dtype=int)
+        selected_component = next((item for item in msm_fit.connected_sets if item.symbols == tuple(int(v) for v in active_symbols.tolist())), None)
+        connected_component_rows = [
+            [
+                int(item.rank),
+                " ".join(str(symbol) for symbol in item.symbols),
+                int(item.n_states),
+                int(item.frame_count),
+                float(item.frame_fraction),
+                bool(item.symbols == tuple(int(v) for v in active_symbols.tolist())),
+            ]
+            for item in msm_fit.connected_sets
+        ]
+        save_csv(
+            Path(cfg.analysis_root) / "msm" / "connected_component_summary.csv",
+            ["rank", "source_clusters", "n_states", "frame_count", "frame_fraction", "selected_for_msm"],
+            connected_component_rows,
+        )
+        active_state_rows = []
+        for msm_state, symbol in enumerate(active_symbols):
+            frame_count = int(histogram[int(symbol)]) if histogram.size else 0
+            active_state_rows.append(
+                [
+                    int(msm_state),
+                    int(symbol),
+                    frame_count,
+                    float(frame_count / max(msm_fit.total_frame_count, 1)),
+                    float(frame_count / max(msm_fit.active_frame_count, 1)),
+                ]
+            )
+        save_csv(
+            Path(cfg.analysis_root) / "msm" / "active_state_mapping.csv",
+            ["msm_state", "source_cluster", "frame_count", "frame_fraction_total", "frame_fraction_within_selected_component"],
+            active_state_rows,
+        )
+        _save_labeled_square_csv(Path(cfg.analysis_root) / "msm" / "transition_count_matrix.csv", state_csv_labels, msm_fit.counts_active.count_matrix)
+
         msm_notes["input_discrete_trajectory_lengths"] = traj_lengths
         msm_notes["requested_msm_lag_frames"] = cfg.msm_lag_frames
         msm_notes["used_safe_msm_lag_frames"] = safe_msm_lag
-        T = np.asarray(msm.transition_matrix)
-        save_csv(Path(cfg.analysis_root) / "msm" / "transition_matrix.csv", ["from\\to"] + [f"state_{i}" for i in range(T.shape[1])], [[f"state_{i}", *T[i].tolist()] for i in range(T.shape[0])])
-        pi = np.asarray(msm.stationary_distribution)
-        save_csv(Path(cfg.analysis_root) / "msm" / "stationary_distribution.csv", ["state", "stationary_probability"], [[i, float(v)] for i, v in enumerate(pi)])
+        msm_notes["component_selection_method"] = "most_populated_strongly_connected_component_at_requested_lag"
+        msm_notes["selected_connected_component_rank"] = int(selected_component.rank) if selected_component is not None else None
+        msm_notes["selected_connected_component_symbols"] = [int(value) for value in active_symbols.tolist()]
+        msm_notes["connected_component_count"] = len(msm_fit.connected_sets)
+        msm_notes["connected_components"] = [
+            {
+                "rank": int(item.rank),
+                "symbols": [int(value) for value in item.symbols],
+                "n_states": int(item.n_states),
+                "frame_count": int(item.frame_count),
+                "frame_fraction": float(item.frame_fraction),
+                "selected_for_msm": bool(item.symbols == tuple(int(v) for v in active_symbols.tolist())),
+            }
+            for item in msm_fit.connected_sets
+        ]
+        coverage_fraction = float(msm_fit.active_frame_count / max(msm_fit.total_frame_count, 1))
+        msm_notes["selected_component_frame_count"] = int(msm_fit.active_frame_count)
+        msm_notes["selected_component_frame_fraction"] = coverage_fraction
+        warnings = []
+        if len(msm_fit.connected_sets) > 1:
+            warnings.append("Discrete state space is disconnected at the chosen MSM lag; kinetics are reported only for the selected strongly connected component.")
+        if coverage_fraction < 0.5:
+            warnings.append("Selected MSM component covers less than half of all clustered frames, so kinetics should be interpreted as exploratory.")
+        if warnings:
+            msm_notes["warnings"] = warnings
+
+        T = _dense_real_array(msm.transition_matrix)
+        _save_labeled_square_csv(Path(cfg.analysis_root) / "msm" / "transition_matrix.csv", state_csv_labels, T)
+        pi = np.asarray(np.real_if_close(msm.stationary_distribution), dtype=float)
+        save_csv(
+            Path(cfg.analysis_root) / "msm" / "stationary_distribution.csv",
+            ["msm_state", "source_cluster", "stationary_probability", "frame_count", "frame_fraction_total"],
+            [
+                [
+                    int(i),
+                    int(active_symbols[i]),
+                    float(pi[i]),
+                    int(histogram[int(active_symbols[i])]) if histogram.size else 0,
+                    float((int(histogram[int(active_symbols[i])]) if histogram.size else 0) / max(msm_fit.total_frame_count, 1)),
+                ]
+                for i in range(len(pi))
+            ],
+        )
         flux = pi[:, None] * T
-        save_csv(Path(cfg.analysis_root) / "msm" / "equilibrium_transition_flux.csv", ["from\\to"] + [f"state_{i}" for i in range(flux.shape[1])], [[f"state_{i}", *flux[i].tolist()] for i in range(flux.shape[0])])
+        _save_labeled_square_csv(Path(cfg.analysis_root) / "msm" / "equilibrium_transition_flux.csv", state_csv_labels, flux)
+        mfpt = _mfpt_matrix(msm)
+        _save_labeled_square_csv(Path(cfg.analysis_root) / "msm" / "mean_first_passage_times.csv", state_csv_labels, mfpt)
+        stationary_entropy_bits = float(-np.sum(pi[pi > 0] * np.log2(pi[pi > 0]))) if np.any(pi > 0) else 0.0
+        effective_states = float(1.0 / np.sum(pi ** 2)) if np.any(pi > 0) else 0.0
+        detailed_balance_residual = flux - flux.T
+        max_db_residual = float(np.nanmax(np.abs(detailed_balance_residual))) if detailed_balance_residual.size else 0.0
         msm_notes["stationary_distribution_sum"] = float(np.sum(pi))
         msm_notes["transition_matrix_row_sums"] = [float(v) for v in np.sum(T, axis=1)]
+        msm_notes["stationary_entropy_bits"] = stationary_entropy_bits
+        msm_notes["effective_state_count"] = effective_states
+        msm_notes["max_detailed_balance_residual"] = max_db_residual
         msm_notes["state_network_edge_definition"] = "Edges are filtered and scaled by equilibrium transition flux pi_i * P_ij; edge labels show transition probabilities P_ij."
+        stationary_summary_lines = [
+            f"Active clusters: {', '.join(str(int(value)) for value in active_symbols)}",
+            f"Coverage: {coverage_fraction:.1%}",
+            f"MSM lag: {safe_msm_lag} frames",
+            f"Effective states: {effective_states:.2f}",
+        ]
         if plot_msm:
-            plot_stationary_distribution(np.arange(len(pi)), pi, Path(cfg.analysis_root) / "msm" / "stationary_distribution", style)
-            plot_transition_matrix_heatmap(T, Path(cfg.analysis_root) / "msm" / "transition_matrix_heatmap", style)
-            msm_notes["state_network_plot"] = plot_state_network(T, pi, Path(cfg.analysis_root) / "msm" / "state_network", style, cfg.state_network_threshold)
+            plot_stationary_distribution(
+                np.arange(len(pi)),
+                pi,
+                Path(cfg.analysis_root) / "msm" / "stationary_distribution",
+                style,
+                state_labels=state_labels,
+                summary_lines=stationary_summary_lines,
+            )
+            plot_transition_matrix_heatmap(
+                T,
+                Path(cfg.analysis_root) / "msm" / "transition_matrix_heatmap",
+                style,
+                state_labels=state_labels,
+                flux_matrix=flux,
+            )
+            msm_notes["state_network_plot"] = plot_state_network(
+                T,
+                pi,
+                Path(cfg.analysis_root) / "msm" / "state_network",
+                style,
+                cfg.state_network_threshold,
+                state_labels=state_labels,
+                mfpt_matrix=mfpt,
+                summary_lines=[
+                    f"Coverage {coverage_fraction:.1%}",
+                    f"max |π_iP_ij-π_jP_ji| = {max_db_residual:.2e}",
+                ],
+            )
         try:
-            its = np.asarray(msm.timescales())
+            its = np.asarray(np.real_if_close(msm.timescales()), dtype=float)
             if its.ndim == 1 and its.size > 0:
                 save_csv(Path(cfg.analysis_root) / "msm" / "implied_timescales_single_lag.csv", ["index", "timescale_frames"], [[i + 1, float(v)] for i, v in enumerate(its)])
                 if plot_msm:
@@ -376,21 +535,83 @@ def run_advanced_analysis(
             msm_notes["timescales_error"] = str(exc)
 
         lag_scan_rows = []
-        for lag in [5, 10, 20, 40, 80]:
+        lag_scan_diag_rows = []
+        lag_models = {}
+        max_segment_length = max((len(segment) for segment in msm_fit.active_dtrajs), default=0)
+        for lag in _lag_candidates(safe_msm_lag, max_segment_length):
             try:
-                if MaximumLikelihoodMSM is None:
-                    break
-                safe_lag = min(lag, max(1, min(traj_lengths) - 1))
-                model = MaximumLikelihoodMSM(reversible=True).fit(dtrajs, lagtime=safe_lag).fetch_model()
-                vals = np.asarray(model.timescales())[:5]
+                model_lag, active_segments, _counts_full, _counts_active = fit_msm_on_active_symbols(dtrajs, active_symbols, lag)
+                lag_models[int(lag)] = model_lag
+                usable_segments = [segment for segment in active_segments if len(segment) > int(lag)]
+                usable_frames = int(sum(len(segment) for segment in usable_segments))
+                lag_scan_diag_rows.append([int(lag), int(lag), int(len(usable_segments)), usable_frames, int(msm_fit.active_frame_count)])
+                vals = np.asarray(np.real_if_close(model_lag.timescales()), dtype=float)[:5]
                 for i, v in enumerate(vals):
                     lag_scan_rows.append([lag, i + 1, float(v)])
-            except Exception:
+            except Exception as exc:
+                lag_scan_diag_rows.append([int(lag), int(lag), 0, 0, int(msm_fit.active_frame_count)])
+                msm_notes.setdefault("lag_scan_errors", {})[str(int(lag))] = str(exc)
                 continue
         if lag_scan_rows:
             save_csv(Path(cfg.analysis_root) / "msm" / "implied_timescales_lag_scan.csv", ["lag_frames", "process_index", "timescale_frames"], lag_scan_rows)
+            save_csv(
+                Path(cfg.analysis_root) / "msm" / "lag_scan_diagnostics.csv",
+                ["lag_frames", "used_lag_frames", "usable_segments", "usable_frames", "active_frame_count"],
+                lag_scan_diag_rows,
+            )
             if plot_msm:
-                plot_lag_scan(lag_scan_rows, Path(cfg.analysis_root) / "msm" / "implied_timescales_lag_scan", style)
+                plot_lag_scan(
+                    lag_scan_rows,
+                    Path(cfg.analysis_root) / "msm" / "implied_timescales_lag_scan",
+                    style,
+                    selected_lag=safe_msm_lag,
+                    diagnostic_rows=lag_scan_diag_rows,
+                )
+
+        eligible_ck_lags = sorted(lag for lag in lag_models if lag >= safe_msm_lag and lag % max(safe_msm_lag, 1) == 0)
+        if len(eligible_ck_lags) >= 2 and int(msm.n_states) >= 2:
+            try:
+                ck_models = [lag_models[lag] for lag in eligible_ck_lags]
+                ck_test = lag_models[safe_msm_lag].ck_test(ck_models, n_metastable_sets=min(int(msm.n_states), 4))
+                predictions = _dense_real_array(ck_test.predictions)
+                estimates = _dense_real_array(ck_test.estimates)
+                ck_rows = []
+                finite_mask = np.isfinite(predictions) & np.isfinite(estimates)
+                ck_rmse = float(np.sqrt(np.mean((predictions[finite_mask] - estimates[finite_mask]) ** 2))) if np.any(finite_mask) else np.nan
+                ck_max_abs_diff = float(np.nanmax(np.abs(predictions - estimates))) if predictions.size else np.nan
+                for lag_idx, lag_value in enumerate(np.asarray(ck_test.lagtimes, dtype=int)):
+                    for from_idx in range(predictions.shape[1]):
+                        for to_idx in range(predictions.shape[2]):
+                            pred_value = float(predictions[lag_idx, from_idx, to_idx])
+                            est_value = float(estimates[lag_idx, from_idx, to_idx])
+                            abs_error = abs(pred_value - est_value) if np.isfinite(pred_value) and np.isfinite(est_value) else np.nan
+                            ck_rows.append([int(lag_value), int(from_idx), int(to_idx), pred_value, est_value, abs_error])
+                save_csv(
+                    Path(cfg.analysis_root) / "msm" / "chapman_kolmogorov_test.csv",
+                    ["lag_frames", "from_state", "to_state", "predicted_probability", "estimated_probability", "absolute_error"],
+                    ck_rows,
+                )
+                msm_notes["chapman_kolmogorov_validation"] = {
+                    "base_lag_frames": int(safe_msm_lag),
+                    "comparison_lags_frames": [int(value) for value in eligible_ck_lags],
+                    "rmse": ck_rmse,
+                    "max_absolute_difference": ck_max_abs_diff,
+                }
+                if plot_msm:
+                    ck_labels = [f"Meta {idx}" for idx in range(predictions.shape[1])]
+                    plot_chapman_kolmogorov_test(
+                        ck_test,
+                        Path(cfg.analysis_root) / "msm" / "chapman_kolmogorov_test",
+                        style,
+                        state_labels=ck_labels,
+                        summary_lines=[
+                            f"base lag {safe_msm_lag}",
+                            f"RMSE {ck_rmse:.3e}",
+                            f"max |Δ| {ck_max_abs_diff:.3f}",
+                        ],
+                    )
+            except Exception as exc:
+                msm_notes["chapman_kolmogorov_error"] = str(exc)
     except Exception as exc:
         msm_notes["msm_error"] = str(exc)
     write_json(Path(cfg.analysis_root) / "msm" / "msm_notes.json", msm_notes)
