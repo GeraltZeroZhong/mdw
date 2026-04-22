@@ -232,9 +232,9 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
     ),
     "contact_occupancy_top20": FigureNoteTemplate(
         name="关键接触残基占据排序图",
-        explanation="该图展示与配体形成接触频率最高的残基及其占据比例，用于识别主要接触热点。",
-        caption_example="关键接触残基占据排序图。接触占据比例较高的残基通常代表更稳定或更频繁的界面接触热点。",
-        data_patterns=("contact_occupancy_combined.csv",),
+        explanation="该图展示与配体形成接触频率最高的残基及其占据比例，并用圆点面积编码平均最小距离，用于同时识别接触频率和空间贴近程度均较突出的热点残基。",
+        caption_example="关键接触残基占据排序图。接触占据比例较高且平均最小距离较短的残基通常代表更稳定、更贴近配体的界面接触热点。",
+        data_patterns=("contact_occupancy_combined.csv", "contact_occupancy_distance_summary.csv"),
     ),
     "hbond_residue_occupancy_top20": FigureNoteTemplate(
         name="关键氢键残基占据排序图",
@@ -430,9 +430,9 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
     ),
     "state_network": FigureNoteTemplate(
         name="MSM 状态网络图",
-        explanation="该图以网络形式展示状态间转移关系和各状态的相对权重，用于直观理解构象状态之间的连通结构。",
-        caption_example="MSM 状态网络图。节点大小反映状态权重，边的存在与粗细反映状态间的动力学连通性。",
-        data_patterns=("transition_matrix.csv", "stationary_distribution.csv"),
+        explanation="该图以网络形式展示状态间平衡转移通量和各状态的相对权重，用于直观理解构象状态之间的动力学连通结构。",
+        caption_example="MSM 状态网络图。节点大小反映平稳概率，边的粗细反映平衡转移通量 pi_i P_ij，边标签给出对应转移概率 P_ij。",
+        data_patterns=("transition_matrix.csv", "stationary_distribution.csv", "equilibrium_transition_flux.csv"),
     ),
     "implied_timescales_single_lag": FigureNoteTemplate(
         name="单滞后时间尺度图",

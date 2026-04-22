@@ -16,6 +16,7 @@ def combine_basic_results(
         style=style,
         top_n_contacts_plot=cfg.top_n_contacts_plot,
         top_n_key_distance_residues=cfg.top_n_key_distance_residues,
+        contact_cutoff_A=cfg.contact_cutoff_nm * 10.0,
         plot_selection=plot_selection,
     )
     return str(cfg.analysis_root)

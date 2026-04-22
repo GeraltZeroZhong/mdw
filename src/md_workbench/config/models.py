@@ -130,7 +130,7 @@ class AdvancedAnalysisConfig:
     temperature_K: float = 300.0
     kB_kcal_mol_K: float = 0.0019872041
     max_saved_components: int = 5
-    state_network_threshold: float = 0.05
+    state_network_threshold: float = 1e-6
     representative_snapshot_clusters: int = 4
 
 
