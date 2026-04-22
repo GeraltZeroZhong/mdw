@@ -121,6 +121,27 @@ def _build_triplet_array(donor_pairs: list[tuple[int, int]], acceptor_indices: l
     return np.asarray(rows, dtype=int)
 
 
+def _make_single_frame_buffer(chunk: md.Trajectory) -> md.Trajectory:
+    kwargs = {}
+    if chunk.time is not None:
+        kwargs["time"] = chunk.time[:1].copy()
+    if chunk.unitcell_lengths is not None:
+        kwargs["unitcell_lengths"] = chunk.unitcell_lengths[:1].copy()
+    if chunk.unitcell_angles is not None:
+        kwargs["unitcell_angles"] = chunk.unitcell_angles[:1].copy()
+    return md.Trajectory(chunk.xyz[:1].copy(), chunk.topology, **kwargs)
+
+
+def _update_single_frame_buffer(frame: md.Trajectory, chunk: md.Trajectory, local_frame_index: int) -> None:
+    frame.xyz[0, :, :] = chunk.xyz[local_frame_index]
+    if frame.time is not None and chunk.time is not None:
+        frame.time[0] = chunk.time[local_frame_index]
+    if frame.unitcell_lengths is not None and chunk.unitcell_lengths is not None:
+        frame.unitcell_lengths[0, :] = chunk.unitcell_lengths[local_frame_index]
+    if frame.unitcell_angles is not None and chunk.unitcell_angles is not None:
+        frame.unitcell_angles[0, :] = chunk.unitcell_angles[local_frame_index]
+
+
 def _present_triplets(frame, triplets: np.ndarray, hbond_distance_cutoff_nm: float, angle_cutoff_rad: float) -> np.ndarray:
     if triplets.size == 0:
         return np.zeros((0, 3), dtype=int)
@@ -166,6 +187,7 @@ def _discover_bridge_relevant_triplets(
     observed_ligand_triplets: dict[tuple[int, int, int], _TripletMetadata] = {}
 
     for chunk in md.iterload(str(dcd_path), top=str(top_path), chunk=_FRAME_CHUNK_SIZE):
+        frame = _make_single_frame_buffer(chunk)
         ligand_near_waters_per_frame = md.compute_neighbors(
             chunk,
             preselect_cutoff_nm,
@@ -177,7 +199,7 @@ def _discover_bridge_relevant_triplets(
         for local_frame_index, near_ligand_water_acceptors in enumerate(ligand_near_waters_per_frame):
             if near_ligand_water_acceptors.size == 0:
                 continue
-            frame = chunk[local_frame_index]
+            _update_single_frame_buffer(frame, chunk, local_frame_index)
             candidate_water_acceptors = [int(atom_idx) for atom_idx in near_ligand_water_acceptors]
             nearby_ligand_atoms = md.compute_neighbors(
                 frame,

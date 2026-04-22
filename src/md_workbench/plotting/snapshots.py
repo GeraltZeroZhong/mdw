@@ -384,6 +384,11 @@ def _panel_header(ax, entry, style: PlotStyleConfig, accent_color: str, panel_in
     panel_letter = chr(ord("a") + panel_index)
     header_font = min(max(style.legend_size + 0.25, 7.1), 8.0)
     sub_font = min(max(style.legend_size - 0.55, 6.0), 6.7)
+    cluster_id = entry.get("cluster_id")
+    population_fraction = entry.get("population_fraction")
+    n_frames = entry.get("n_frames")
+    title = str(entry.get("title", f"Snapshot {panel_index + 1}"))
+    title_main, _, title_sub = title.partition("\n")
     ax.text(
         0.025,
         0.965,
@@ -399,7 +404,7 @@ def _panel_header(ax, entry, style: PlotStyleConfig, accent_color: str, panel_in
     ax.text(
         0.125,
         0.965,
-        f"State {entry['cluster_id']}",
+        f"State {cluster_id}" if cluster_id is not None else title_main,
         transform=ax.transAxes,
         ha="left",
         va="top",
@@ -407,21 +412,25 @@ def _panel_header(ax, entry, style: PlotStyleConfig, accent_color: str, panel_in
         fontweight="semibold",
         color=style.spine_color,
     )
-    ax.text(
-        0.975,
-        0.965,
-        f"{100.0 * float(entry['population_fraction']):.1f}%",
-        transform=ax.transAxes,
-        ha="right",
-        va="top",
-        fontsize=header_font,
-        fontweight="semibold",
-        color=style.spine_color,
-    )
+    if population_fraction is not None:
+        ax.text(
+            0.975,
+            0.965,
+            f"{100.0 * float(population_fraction):.1f}%",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=header_font,
+            fontweight="semibold",
+            color=style.spine_color,
+        )
     ax.text(
         0.125,
         0.900,
-        f"n = {int(entry['n_frames']):,}" + ("  |  ligand off-scale" if ligand_offscale else ""),
+        (
+            (f"n = {int(n_frames):,}" if n_frames is not None else title_sub or "representative snapshot")
+            + ("  |  ligand off-scale" if ligand_offscale else "")
+        ),
         transform=ax.transAxes,
         ha="left",
         va="top",
@@ -459,7 +468,8 @@ def snapshot_grid(snapshot_entries, out_base, style: PlotStyleConfig, title: str
             hspace=0.07 if rows == 1 else 0.08,
         )
         for panel_index, (ax, entry, (protein_proj, ligand_proj)) in enumerate(zip(axes, snapshot_entries, projected_entries)):
-            accent_color = style.categorical_palette[int(entry["cluster_id"]) % len(style.categorical_palette)]
+            color_index = int(entry.get("cluster_id", panel_index)) % len(style.categorical_palette)
+            accent_color = style.categorical_palette[color_index]
             _draw_protein_worm(ax, protein_proj, entry, style, z_min, z_max)
             ligand_offscale = _draw_ligand(ax, ligand_proj, entry, style, z_min, z_max, x_min, x_max, y_min, y_max)
             _panel_header(ax, entry, style, accent_color, panel_index, ligand_offscale)
@@ -484,17 +494,18 @@ def snapshot_grid(snapshot_entries, out_base, style: PlotStyleConfig, title: str
                 color=style.spine_color,
             )
             first_entry = snapshot_entries[0]
-            fig.text(
-                0.992,
-                0.984,
-                (
-                    f"Top {int(first_entry['n_clusters_shown'])} of {int(first_entry['n_clusters_total'])} states"
-                    f"  |  cumulative occupancy {100.0 * float(first_entry['cumulative_population_fraction']):.1f}%"
-                ),
-                ha="right",
-                va="top",
-                fontsize=max(style.legend_size - 0.75, 6.2),
-                color=style.spine_color,
-                alpha=0.75,
-            )
+            if "n_clusters_shown" in first_entry and "n_clusters_total" in first_entry and "cumulative_population_fraction" in first_entry:
+                fig.text(
+                    0.992,
+                    0.984,
+                    (
+                        f"Top {int(first_entry['n_clusters_shown'])} of {int(first_entry['n_clusters_total'])} states"
+                        f"  |  cumulative occupancy {100.0 * float(first_entry['cumulative_population_fraction']):.1f}%"
+                    ),
+                    ha="right",
+                    va="top",
+                    fontsize=max(style.legend_size - 0.75, 6.2),
+                    color=style.spine_color,
+                    alpha=0.75,
+                )
         save_figure(fig, out_base, style)
