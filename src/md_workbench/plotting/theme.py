@@ -560,9 +560,15 @@ def _candidate_data_directories(base_path: Path) -> list[Path]:
     parts = base_path.parts
     if "figures_combined" in parts:
         idx = parts.index("figures_combined")
-        mapped = Path(*parts[:idx], "process_data", *parts[idx + 1 : -1])
-        if mapped not in candidates:
-            candidates.append(mapped)
+        process_root = Path(*parts[:idx], "process_data")
+        mapped = process_root / Path(*parts[idx + 1 : -1])
+        for candidate in [mapped, process_root]:
+            if candidate not in candidates:
+                candidates.append(candidate)
+        if process_root.exists():
+            for candidate in sorted(path for path in process_root.rglob("*") if path.is_dir()):
+                if candidate not in candidates:
+                    candidates.append(candidate)
     return candidates
 
 
@@ -587,12 +593,13 @@ def _resolve_data_patterns(search_dirs: list[Path], patterns: tuple[str, ...] | 
 def _guess_reproduction_data(base_path: Path, extra_patterns: tuple[str, ...] = ()) -> list[Path]:
     search_dirs = _candidate_data_directories(base_path)
     stem = base_path.stem
+    note_path = base_path.with_suffix(".txt").resolve()
     matches: list[Path] = []
     seen: set[Path] = set()
 
     def add_path(path: Path) -> None:
         resolved = path.resolve()
-        if path.exists() and resolved not in seen:
+        if path.exists() and resolved != note_path and resolved not in seen:
             seen.add(resolved)
             matches.append(resolved)
 
@@ -609,7 +616,14 @@ def _guess_reproduction_data(base_path: Path, extra_patterns: tuple[str, ...] = 
         target_tokens = _tokenize_stem(stem)
         scored: list[tuple[int, Path]] = []
         for directory in search_dirs:
-            for candidate in sorted(directory.glob("*.csv")) + sorted(directory.glob("*.json")):
+            for candidate in (
+                sorted(directory.rglob("*.csv"))
+                + sorted(directory.rglob("*.json"))
+                + sorted(directory.rglob("*.dat"))
+                + sorted(directory.rglob("*.txt"))
+            ):
+                if candidate.resolve() == note_path or "figures_combined" in candidate.parts:
+                    continue
                 overlap = target_tokens & _tokenize_stem(candidate.stem)
                 if overlap:
                     scored.append((len(overlap), candidate.resolve()))

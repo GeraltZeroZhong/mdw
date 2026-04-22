@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections import Counter
 import json
 import shutil
 
@@ -37,12 +38,53 @@ THEMATIC_FIGURE_GROUPS = {
         "rmsd_replot_protein",
         "sasa_components_combined",
     },
+    "structure_pose": {
+        "dssp_fractions_combined",
+        "dssp_residue_occupancy_combined",
+        "ligand_com_distance_combined",
+        "ligand_orientation_angle_combined",
+        "rmsf_ca_combined",
+    },
+    "conformational_landscape": {
+        "cluster_population_overall",
+        "clusters_tic1_tic2",
+        "explained_variance_ratio",
+        "free_energy_landscape_pc1_pc2",
+        "free_energy_landscape_pc1_pc2_3d",
+        "free_energy_landscape_tic1_tic2",
+        "free_energy_landscape_tic1_tic2_3d",
+        "pc1_pc2_scatter",
+        "representative_state_snapshots",
+        "singular_values",
+        "state_population_by_replica",
+        "tic1_tic2_scatter",
+    },
+    "kinetics": {
+        "chapman_kolmogorov_test",
+        "implied_timescales_lag_scan",
+        "implied_timescales_single_lag",
+        "state_network",
+        "stationary_distribution",
+        "transition_matrix_heatmap",
+    },
+    "binding_energy": {
+        "mmgbsa_summary",
+        "mmgbsa_per_frame",
+        "mmgbsa_per_residue",
+        "mmgbsa_delta_total_summary",
+        "mmgbsa_delta_total_per_frame",
+        "mmgbsa_delta_total_distribution",
+        "mmgbsa_per_residue_heatmap",
+        "mmgbsa_per_residue_top",
+    },
 }
 THEMATIC_FIGURE_LOOKUP = {
     stem: group
     for group, stems in THEMATIC_FIGURE_GROUPS.items()
     for stem in stems
 }
+FIGURE_CLUSTER_ORDER = list(THEMATIC_FIGURE_GROUPS.keys()) + ["uncategorized"]
+NONFUNCTIONAL_RELATIVE_PREFIXES = {"combined", "pca", "tica", "clustering", "msm", "snapshots"}
 
 
 def _copy_with_structure(file_path: Path, source_root: Path, target_root: Path) -> str:
@@ -67,17 +109,44 @@ def _iter_files(root: Path):
             yield path
 
 
-def _collect_clustered_figures(src_root: Path, target_root: Path, source_kind: str):
+def _refresh_bundle_layout(bundle_root: Path, bundle_cfg: OutputBundleConfig) -> None:
+    for relative in [bundle_cfg.figures_dir_name, bundle_cfg.data_dir_name]:
+        target = bundle_root / relative
+        if target.exists():
+            shutil.rmtree(target)
+    manifest_path = bundle_root / "manifest.json"
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+
+def _cluster_relative_path(file_path: Path, source_root: Path) -> Path:
+    parts = list(file_path.relative_to(source_root).parts)
+    while parts and parts[0] in NONFUNCTIONAL_RELATIVE_PREFIXES:
+        parts.pop(0)
+    return Path(*parts) if parts else Path(file_path.name)
+
+
+def _classify_figure_destination(file_path: Path, source_root: Path, label: str) -> tuple[str, Path]:
+    group = THEMATIC_FIGURE_LOOKUP.get(file_path.stem, "uncategorized")
+    relative = _cluster_relative_path(file_path, source_root)
+    if group == "uncategorized":
+        return group, Path(label) / relative
+    return group, relative
+
+
+def _collect_clustered_figures(src_root: Path, target_root: Path, label: str):
     copied = []
+    group_counts: Counter[str] = Counter()
     if src_root.exists():
         for path in sorted(_iter_files(src_root)):
             if path.suffix.lower() in FIGURE_EXTS:
-                cluster, rel_dest, source_hint = classify_bundle_figure(path, src_root, source_kind)
-                dest = target_root / cluster / rel_dest
-                if dest.exists():
-                    dest = target_root / cluster / source_hint / rel_dest
-                copied.append(_copy_to_path(path, dest))
-    return copied
+                group, relative = _classify_figure_destination(path, src_root, label)
+                dest = target_root / group / relative
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, dest)
+                copied.append(str(dest.resolve()))
+                group_counts[group] += 1
+    return copied, group_counts
 
 
 def _collect_analysis_data(src_root: Path, target_root: Path):
@@ -111,20 +180,6 @@ def _write_organized_figure_notes(figure_files: list[str]):
     return note_files
 
 
-def _mirror_thematic_figures(figure_files: list[str], figures_root: Path):
-    mirrored = []
-    for file_path in figure_files:
-        path = Path(file_path)
-        group = THEMATIC_FIGURE_LOOKUP.get(path.stem)
-        if group is None:
-            continue
-        dest = figures_root / group / path.name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, dest)
-        mirrored.append(str(dest.resolve()))
-    return mirrored
-
-
 def _collect_simulation_logs(run_cfg: RunConfig, target_root: Path):
     copied = []
     root = Path(run_cfg.output_root)
@@ -151,6 +206,7 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         return {}
 
     bundle_root = ensure_dir(bundle_cfg.root)
+    _refresh_bundle_layout(bundle_root, bundle_cfg)
     figures_root = ensure_dir(bundle_root / bundle_cfg.figures_dir_name)
     data_root = ensure_dir(bundle_root / bundle_cfg.data_dir_name)
 
@@ -165,31 +221,37 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
 
     figure_files = []
     data_files = []
+    figure_cluster_counts: Counter[str] = Counter()
 
     if do_basic:
-        figure_files.extend(_collect_clustered_figures(Path(basic_cfg.analysis_root) / "combined", figures_root, "basic"))
+        copied, counts = _collect_clustered_figures(Path(basic_cfg.analysis_root) / "combined", figures_root, "basic")
+        figure_files.extend(copied)
+        figure_cluster_counts.update(counts)
         data_files.extend(_collect_analysis_data(Path(basic_cfg.analysis_root), data_root / "basic"))
     if do_water:
-        figure_files.extend(_collect_clustered_figures(Path(water_cfg.analysis_root) / "combined", figures_root, "waterbridge"))
+        copied, counts = _collect_clustered_figures(Path(water_cfg.analysis_root) / "combined", figures_root, "waterbridge")
+        figure_files.extend(copied)
+        figure_cluster_counts.update(counts)
         data_files.extend(_collect_analysis_data(Path(water_cfg.analysis_root), data_root / "waterbridge"))
     if do_advanced:
-        figure_files.extend(_collect_clustered_figures(Path(advanced_cfg.analysis_root), figures_root, "advanced"))
+        copied, counts = _collect_clustered_figures(Path(advanced_cfg.analysis_root), figures_root, "advanced")
+        figure_files.extend(copied)
+        figure_cluster_counts.update(counts)
         data_files.extend(_collect_analysis_data(Path(advanced_cfg.analysis_root), data_root / "advanced"))
     if do_mmgbsa:
-        figure_files.extend(_collect_clustered_figures(Path(mmgbsa_cfg.analysis_root), figures_root, "mmgbsa"))
+        copied, counts = _collect_clustered_figures(Path(mmgbsa_cfg.analysis_root), figures_root, "mmgbsa")
+        figure_files.extend(copied)
+        figure_cluster_counts.update(counts)
         data_files.extend(_collect_analysis_data(Path(mmgbsa_cfg.analysis_root), data_root / "mmgbsa"))
     if bundle_cfg.include_simulation_logs:
         data_files.extend(_collect_simulation_logs(run_cfg, data_root))
-    figure_files.extend(_mirror_thematic_figures(list(figure_files), figures_root))
     note_files = _write_organized_figure_notes(figure_files)
 
-    cluster_counts = {cluster: 0 for cluster in BUNDLE_CLUSTER_ORDER}
-    for file_path in figure_files:
-        rel = Path(file_path).resolve().relative_to(figures_root.resolve())
-        cluster = rel.parts[0] if rel.parts else ""
-        cluster_counts.setdefault(cluster, 0)
-        cluster_counts[cluster] += 1
-    cluster_counts = {name: count for name, count in cluster_counts.items() if count > 0}
+    ordered_cluster_counts = {
+        group: int(figure_cluster_counts[group])
+        for group in FIGURE_CLUSTER_ORDER
+        if figure_cluster_counts.get(group, 0) > 0
+    }
 
     manifest = {
         "bundle_root": str(bundle_root.resolve()),
@@ -198,7 +260,7 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         "n_figure_files": len(figure_files),
         "n_figure_note_files": len(note_files),
         "n_data_files": len(data_files),
-        "figure_clusters": cluster_counts,
+        "figure_clusters": ordered_cluster_counts,
         "notes": [
             "This project stores generated process files under the project work directory and curated deliverables under the project results directory.",
             "figures_root organizes bundled figures by information clusters so panels that belong in one manuscript composite figure stay together.",
