@@ -470,6 +470,47 @@ def _single_root_existing_files(
     return outputs
 
 
+def summarize_mmgbsa_postprocess_result(result: dict | None) -> str:
+    if not isinstance(result, dict):
+        return "Completed MM/GBSA postprocess"
+
+    status = str(result.get("status", "")).strip()
+    if status == "failed_non_blocking":
+        return "MM/GBSA postprocess failed but was kept non-blocking"
+
+    replica_results = result.get("replica_results")
+    if isinstance(replica_results, list):
+        total = len(replica_results)
+        summarized = sum(1 for item in replica_results if item.get("summary_rows"))
+        failed = sum(1 for item in replica_results if isinstance(item.get("run"), dict) and item["run"].get("status") == "failed")
+        skipped = max(total - summarized - failed, 0)
+        if summarized:
+            detail = f"Completed MM/GBSA postprocess for {summarized}/{total} replicas"
+            if failed:
+                detail += f"; {failed} failed"
+            elif skipped:
+                detail += f"; {skipped} skipped"
+            return detail
+        if total:
+            if failed == total:
+                return "MM/GBSA postprocess failed for all replicas"
+            return "MM/GBSA postprocess finished without parsed replica summaries"
+
+    produced = []
+    if result.get("summary_csv"):
+        produced.append("summary")
+    if result.get("per_frame_csv"):
+        produced.append("per-frame")
+    if result.get("per_residue_csv"):
+        produced.append("per-residue")
+    if produced:
+        return f"Completed MM/GBSA postprocess from existing files ({', '.join(produced)})"
+
+    if status == "skipped_or_failed":
+        return "MM/GBSA postprocess finished without parsed outputs"
+    return "Completed MM/GBSA postprocess"
+
+
 def run_mmgbsa_postprocess(
     cfg: MMGBSAConfig,
     style: PlotStyleConfig,
