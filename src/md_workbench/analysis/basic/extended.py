@@ -20,29 +20,39 @@ def compute_rg(traj, protein_atom_indices) -> np.ndarray:
 
 
 def compute_sasa_metrics(traj, protein_atom_indices, ligand_atom_indices, probe_radius_nm: float = 0.14):
-    atom_sasa = md.shrake_rupley(traj, mode="atom", probe_radius=probe_radius_nm)
+    protein_atom_indices = [int(idx) for idx in protein_atom_indices]
+    ligand_atom_indices = [int(idx) for idx in ligand_atom_indices]
+    protein_atom_set = set(protein_atom_indices)
+    solute_atom_indices = protein_atom_indices + [idx for idx in ligand_atom_indices if idx not in protein_atom_set]
+    if not solute_atom_indices:
+        raise ValueError("No protein or ligand atoms available for SASA analysis.")
+    solute_traj = traj.atom_slice(solute_atom_indices)
+    atom_sasa = md.shrake_rupley(solute_traj, mode="atom", probe_radius=probe_radius_nm)
+    index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(solute_atom_indices)}
+    protein_local = [index_map[idx] for idx in protein_atom_indices if idx in index_map]
+    ligand_local = [index_map[idx] for idx in ligand_atom_indices if idx in index_map]
     complex_sasa = atom_sasa.sum(axis=1) * 100.0
-    protein_sasa = atom_sasa[:, protein_atom_indices].sum(axis=1) * 100.0
-    ligand_sasa = atom_sasa[:, ligand_atom_indices].sum(axis=1) * 100.0
-    buried = protein_sasa + ligand_sasa - complex_sasa
+    protein_sasa = atom_sasa[:, protein_local].sum(axis=1) * 100.0
+    ligand_sasa = atom_sasa[:, ligand_local].sum(axis=1) * 100.0
+    buried = np.maximum(protein_sasa + ligand_sasa - complex_sasa, 0.0)
     return complex_sasa, protein_sasa, ligand_sasa, buried
 
 
 def compute_dssp_metrics(traj):
-    dssp = md.compute_dssp(traj, simplified=True)
+    protein_atom_indices = traj.topology.select("protein")
+    if len(protein_atom_indices) == 0:
+        raise ValueError("Trajectory does not contain any protein residues for DSSP analysis.")
+    protein_traj = traj.atom_slice(protein_atom_indices)
+    dssp = md.compute_dssp(protein_traj, simplified=True)
     if dssp.ndim != 2:
         raise ValueError("DSSP output is not two-dimensional.")
-    residues = list(traj.topology.residues)
-    protein_mask = np.asarray([res.is_protein for res in residues], dtype=bool)
-    if protein_mask.sum() == 0:
-        raise ValueError("Trajectory does not contain any protein residues for DSSP analysis.")
-    dssp_protein = dssp[:, protein_mask]
+    residues = list(protein_traj.topology.residues)
     states = {"Helix": "H", "Sheet": "E", "Coil": "C"}
-    fractions = {name: (dssp_protein == code).mean(axis=1) for name, code in states.items()}
-    residue_labels = [residue_label(res) for res in residues if res.is_protein]
+    fractions = {name: (dssp == code).mean(axis=1) for name, code in states.items()}
+    residue_labels = [residue_label(res) for res in residues]
     occupancy = np.zeros((len(residue_labels), 3), dtype=float)
     for idx, code in enumerate(["H", "E", "C"]):
-        occupancy[:, idx] = (dssp_protein == code).mean(axis=0)
+        occupancy[:, idx] = (dssp == code).mean(axis=0)
     return dssp, residue_labels, fractions, occupancy
 
 
