@@ -87,17 +87,23 @@ FIGURE_CLUSTER_ORDER = list(THEMATIC_FIGURE_GROUPS.keys()) + ["uncategorized"]
 NONFUNCTIONAL_RELATIVE_PREFIXES = {"combined", "pca", "tica", "clustering", "msm", "snapshots"}
 
 
+def _same_resolved_path(source: Path, dest: Path) -> bool:
+    return source.resolve() == dest.resolve()
+
+
 def _copy_with_structure(file_path: Path, source_root: Path, target_root: Path) -> str:
     rel = file_path.relative_to(source_root)
     dest = target_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(file_path, dest)
+    if not _same_resolved_path(file_path, dest):
+        shutil.copy2(file_path, dest)
     return str(dest.resolve())
 
 
 def _copy_to_path(file_path: Path, dest: Path) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(file_path, dest)
+    if not _same_resolved_path(file_path, dest):
+        shutil.copy2(file_path, dest)
     return str(dest.resolve())
 
 
@@ -142,9 +148,7 @@ def _collect_clustered_figures(src_root: Path, target_root: Path, label: str):
             if path.suffix.lower() in FIGURE_EXTS:
                 group, relative = _classify_figure_destination(path, src_root, label)
                 dest = target_root / group / relative
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, dest)
-                copied.append(str(dest.resolve()))
+                copied.append(_copy_to_path(path, dest))
                 group_counts[group] += 1
     return copied, group_counts
 
@@ -178,7 +182,6 @@ def _write_organized_figure_notes(figure_files: list[str]):
         note_path = write_figure_note(base_path, formats=sorted(formats))
         note_files.append(str(note_path.resolve()))
     return note_files
-
 
 def _collect_simulation_logs(run_cfg: RunConfig, target_root: Path):
     copied = []
