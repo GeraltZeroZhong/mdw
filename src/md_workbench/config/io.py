@@ -26,6 +26,49 @@ def _coerce_dataclass(cls: type[T], data: dict[str, Any]) -> T:
     return cls(**valid)
 
 
+def _workspace_root_candidate_score(root: Path, config_path: Path) -> int:
+    score = 0
+    if config_path.name == "project_config.json":
+        if config_path == (root / "project_config.json"):
+            score += 8
+        if config_path == (root / "inputs" / "project_config.json"):
+            score += 10
+    for rel_path, weight in [
+        ("inputs", 2),
+        ("work", 2),
+        ("results", 2),
+        ("logs", 2),
+        ("work/analysis", 1),
+        ("logs/runs", 1),
+    ]:
+        if (root / rel_path).exists():
+            score += weight
+    return score
+
+
+def _resolve_workspace_root(config_path: Path, raw_workspace_root: str) -> str:
+    config_path = config_path.expanduser().resolve()
+    raw = str(raw_workspace_root).strip()
+    if raw not in {"", "."}:
+        workspace_root = Path(raw).expanduser()
+        if workspace_root.is_absolute():
+            return str(workspace_root.resolve())
+        return str((config_path.parent / workspace_root).resolve())
+
+    if config_path.name != "project_config.json":
+        return str(config_path.parent)
+
+    candidates = [config_path.parent, *config_path.parent.parents]
+    best_root = config_path.parent
+    best_score = -1
+    for candidate in candidates:
+        score = _workspace_root_candidate_score(candidate, config_path)
+        if score > best_score:
+            best_root = candidate
+            best_score = score
+    return str(best_root)
+
+
 def workflow_from_dict(data: dict[str, Any]) -> WorkflowConfig:
     cfg = WorkflowConfig()
     if "prep" in data:
@@ -88,8 +131,7 @@ def load_workflow_config(path: str | Path) -> WorkflowConfig:
     path = Path(path)
     with open(path, "r", encoding="utf-8") as handle:
         cfg = workflow_from_dict(json.load(handle))
-    if str(cfg.workspace_root).strip() in {"", "."}:
-        cfg.workspace_root = str(path.resolve().parent)
+    cfg.workspace_root = _resolve_workspace_root(path, cfg.workspace_root)
     return cfg
 
 
