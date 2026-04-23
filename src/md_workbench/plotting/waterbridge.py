@@ -6,8 +6,8 @@ import numpy as np
 from ..config import PlotSelectionConfig, PlotStyleConfig
 from ..core import save_csv, write_dict_csv
 from .bars import ranked_lollipop
-from .residue_labels import compact_residue_label
-from .series import line_series, replica_trend_series
+from .residue_labels import compact_replica_name, compact_residue_label
+from .series import line_series, publication_replicate_series
 
 
 def plot_replica_waterbridge_counts(time_ns, waterbridge_count, out_dir: str | Path, replica_name: str, style: PlotStyleConfig):
@@ -100,13 +100,13 @@ def plot_combined_waterbridge(
         ).tolist(),
     )
     if plot_selection is None or plot_selection.enabled("waterbridge_combined_counts"):
-        replica_trend_series(
+        publication_replicate_series(
             common_time_ns,
             count_stack,
             "Number of bridging waters",
             combined / "waterbridge_count_combined",
             style,
             title="Strict water-bridge count",
-            color=style.distance_color,
+            replicate_labels=[compact_replica_name(name) for name in names],
             rolling_window_fraction=rolling_window_fraction,
         )

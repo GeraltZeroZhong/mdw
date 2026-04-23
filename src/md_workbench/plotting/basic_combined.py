@@ -10,7 +10,13 @@ from ..core import aggregate_metric_rows, save_csv, write_dict_csv
 from .bars import ranked_distance_lollipop, ranked_lollipop
 from .heatmaps import interaction_fingerprint_heatmap, matrix_heatmap, simple_boxplot, stacked_fraction_area
 from .residue_labels import compact_replica_name, compact_residue_label
-from .series import direct_label_line_series, draw_replicate_summary, replica_trend_series, shaded_profile
+from .series import (
+    direct_label_line_series,
+    draw_publication_replicate_summary,
+    draw_replicate_summary,
+    publication_replicate_series,
+    shaded_profile,
+)
 from .theme import finalize_axes, publication_style, save_figure
 import matplotlib.pyplot as plt
 
@@ -158,33 +164,31 @@ def plot_combined_rmsd(
     if plot_selection is None or plot_selection.enabled("basic_combined_rmsd"):
         with publication_style(style):
             fig, axes = plt.subplots(2, 1, figsize=(7.6, 5.8), sharex=True)
-            draw_replicate_summary(
+            top_payload = draw_publication_replicate_summary(
                 axes[0],
                 common_time_ns,
                 protein,
                 style,
-                color=style.protein_color,
+                replicate_labels=[compact_replica_name(name) for name in names],
                 rolling_window_fraction=rolling_window_fraction,
             )
-            draw_replicate_summary(
+            draw_publication_replicate_summary(
                 axes[1],
                 common_time_ns,
                 ligand,
                 style,
-                color=style.ligand_color,
+                replicate_labels=[compact_replica_name(name) for name in names],
                 rolling_window_fraction=rolling_window_fraction,
             )
             finalize_axes(axes[0], style, ylabel="Protein backbone RMSD (Å)", title="Protein backbone")
             finalize_axes(axes[1], style, xlabel="Time (ns)", ylabel="Ligand heavy-atom RMSD (Å)", title="Ligand heavy-atom")
-            fig.suptitle("RMSD across replicas", y=1.02, weight="semibold", fontsize=style.title_size + 1.0)
-            fig.text(
-                0.015,
-                0.99,
-                "thin gray = replica trajectories, thick color = rolling mean, band = replica spread",
-                fontsize=max(style.legend_size - 0.2, 6.7),
-                color=style.spine_color,
-                alpha=0.78,
-                va="top",
+            fig.suptitle("RMSD across replicas", y=1.03, weight="semibold", fontsize=style.title_size + 1.0)
+            fig.legend(
+                handles=top_payload["legend_handles"],
+                frameon=False,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.995),
+                ncol=5,
             )
             save_figure(fig, combined_dir / "rmsd_combined", style)
 
@@ -199,14 +203,14 @@ def plot_combined_min_distance(
     time_ns, stack, names = _common_time_and_stack(replica_results, "global_min_distance_A")
     _write_stack_csv(combined_dir / "min_distance_combined.csv", time_ns, stack, [f"{n}_min_distance_A" for n in names], "mean_min_distance_A", "sd_min_distance_A")
     if plot_selection is None or plot_selection.enabled("basic_combined_min_distance"):
-        replica_trend_series(
+        publication_replicate_series(
             time_ns,
             stack,
             "Minimum ligand-protein distance (Å)",
             combined_dir / "min_distance_combined",
             style,
             title="Ligand-protein minimum heavy-atom distance",
-            color=_series_summary_color("global_min_distance_A", style),
+            replicate_labels=[compact_replica_name(name) for name in names],
             rolling_window_fraction=rolling_window_fraction,
         )
 
@@ -431,14 +435,14 @@ def plot_combined_counts_and_shapes(
         time_ns, stack, names = _common_time_and_stack(replica_results, key)
         _write_stack_csv(combined_dir / f"{base}.csv", time_ns, stack, [f"{n}_{key}" for n in names], f"mean_{key}", f"sd_{key}")
         if plot_selection is None or plot_selection.enabled("basic_combined_counts_and_shapes"):
-            replica_trend_series(
+            publication_replicate_series(
                 time_ns,
                 stack,
                 ylabel,
                 combined_dir / base,
                 style,
                 title=title,
-                color=_series_summary_color(key, style),
+                replicate_labels=[compact_replica_name(name) for name in names],
                 rolling_window_fraction=rolling_window_fraction,
             )
 

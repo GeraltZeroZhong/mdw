@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
+import re
 
 from pathlib import Path
 import numpy as np
@@ -10,13 +11,12 @@ import matplotlib.pyplot as plt
 from ..config import WorkflowConfig
 from ..core import ensure_project_layout, normalize_workflow_paths, organize_outputs, read_dict_csv
 from ..core.progress import ProgressCallback, emit_progress
-from ..plotting.residue_labels import compact_residue_label
+from ..plotting.residue_labels import compact_replica_name, compact_residue_label
 from ..plotting.series import (
     direct_label_line_series,
-    draw_replicate_summary,
+    draw_publication_replicate_summary,
     draw_summary_band,
-    replica_trend_series,
-    summary_band_series,
+    publication_replicate_series,
 )
 from ..plotting.theme import finalize_axes, publication_style, save_figure
 from ..postprocess.mmgbsa import run_mmgbsa_postprocess, summarize_mmgbsa_postprocess_result
@@ -48,7 +48,25 @@ def _replica_stack(rows: list[dict[str, str]], value_suffix: str) -> np.ndarray:
     keys = [key for key in rows[0].keys() if key.startswith("replica_") and key.endswith(value_suffix)]
     if not keys:
         raise KeyError(f"Missing replica columns with suffix '{value_suffix}'")
+    keys.sort(
+        key=lambda key: (
+            int(re.match(r"replica_(\d+)_", key).group(1)) if re.match(r"replica_(\d+)_", key) else 10**9,
+            key,
+        )
+    )
     return np.vstack([_numeric_column(rows, key) for key in keys])
+
+
+def _replica_labels(rows: list[dict[str, str]], value_suffix: str) -> list[str]:
+    keys = [key for key in rows[0].keys() if key.startswith("replica_") and key.endswith(value_suffix)]
+    keys.sort(
+        key=lambda key: (
+            int(re.match(r"replica_(\d+)_", key).group(1)) if re.match(r"replica_(\d+)_", key) else 10**9,
+            key,
+        )
+    )
+    suffix_token = f"_{value_suffix}"
+    return [compact_replica_name(key[: -len(suffix_token)]) for key in keys]
 
 
 def _replot_replicate_metric(
@@ -58,7 +76,6 @@ def _replot_replicate_metric(
     value_suffix: str,
     ylabel: str,
     title: str,
-    color: str,
     rolling_window_fraction: float,
     cfg: WorkflowConfig,
 ) -> bool:
@@ -69,14 +86,14 @@ def _replot_replicate_metric(
         return False
     time_ns = _numeric_column(rows, "time_ns")
     stack = _replica_stack(rows, value_suffix)
-    replica_trend_series(
+    publication_replicate_series(
         time_ns,
         stack,
         ylabel,
         out_base,
         cfg.plot_style,
         title=title,
-        color=color,
+        replicate_labels=_replica_labels(rows, value_suffix),
         rolling_window_fraction=rolling_window_fraction,
     )
     return True
@@ -93,62 +110,56 @@ def _replot_combined_rmsd(basic_root: Path, cfg: WorkflowConfig) -> bool:
     time_ns = _numeric_column(rows, "time_ns")
     protein_stack = _replica_stack(rows, "protein_backbone_rmsd_A")
     ligand_stack = _replica_stack(rows, "ligand_heavy_rmsd_A")
+    protein_labels = _replica_labels(rows, "protein_backbone_rmsd_A")
+    ligand_labels = _replica_labels(rows, "ligand_heavy_rmsd_A")
     with publication_style(cfg.plot_style):
         fig, axes = plt.subplots(2, 1, figsize=(7.6, 5.8), sharex=True)
-        draw_replicate_summary(
+        top_payload = draw_publication_replicate_summary(
             axes[0],
             time_ns,
             protein_stack,
             cfg.plot_style,
-            color=cfg.plot_style.protein_color,
+            replicate_labels=protein_labels,
             rolling_window_fraction=cfg.basic.rolling_window_fraction,
         )
-        draw_replicate_summary(
+        draw_publication_replicate_summary(
             axes[1],
             time_ns,
             ligand_stack,
             cfg.plot_style,
-            color=cfg.plot_style.ligand_color,
+            replicate_labels=ligand_labels,
             rolling_window_fraction=cfg.basic.rolling_window_fraction,
         )
         finalize_axes(axes[0], cfg.plot_style, ylabel="Protein backbone RMSD (Å)", title="Protein backbone")
         finalize_axes(axes[1], cfg.plot_style, xlabel="Time (ns)", ylabel="Ligand heavy-atom RMSD (Å)", title="Ligand heavy-atom")
-        fig.suptitle("RMSD across replicas", y=1.02, weight="semibold", fontsize=cfg.plot_style.title_size + 1.0)
-        fig.text(
-            0.015,
-            0.99,
-            "thin gray = replica trajectories, thick color = rolling mean, band = replica spread",
-            fontsize=max(cfg.plot_style.legend_size - 0.2, 6.7),
-            color=cfg.plot_style.spine_color,
-            alpha=0.78,
-            va="top",
+        fig.suptitle("RMSD across replicas", y=1.03, weight="semibold", fontsize=cfg.plot_style.title_size + 1.0)
+        fig.legend(
+            handles=top_payload["legend_handles"],
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=5,
         )
         save_figure(fig, basic_root / "rmsd_combined", cfg.plot_style)
 
-    protein_mean = _numeric_column(rows, "protein_backbone_rmsd_mean_A")
-    protein_sd = _numeric_column(rows, "protein_backbone_rmsd_sd_A")
-    ligand_mean = _numeric_column(rows, "ligand_heavy_rmsd_mean_A")
-    ligand_sd = _numeric_column(rows, "ligand_heavy_rmsd_sd_A")
-    summary_band_series(
+    publication_replicate_series(
         time_ns,
-        protein_mean,
-        protein_sd,
+        protein_stack,
         "Protein backbone RMSD (Å)",
         basic_root / "rmsd_replot_protein",
         cfg.plot_style,
         title="Protein backbone RMSD replot",
-        color=cfg.plot_style.protein_color,
+        replicate_labels=protein_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
-    summary_band_series(
+    publication_replicate_series(
         time_ns,
-        ligand_mean,
-        ligand_sd,
+        ligand_stack,
         "Ligand heavy-atom RMSD (Å)",
         basic_root / "rmsd_replot_ligand",
         cfg.plot_style,
         title="Ligand heavy-atom RMSD replot",
-        color=cfg.plot_style.ligand_color,
+        replicate_labels=ligand_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
     return True
@@ -275,7 +286,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="min_distance_A",
         ylabel="Minimum ligand-protein distance (Å)",
         title="Ligand-protein minimum heavy-atom distance",
-        color=cfg.plot_style.distance_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -285,7 +295,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="contact_count",
         ylabel="Count",
         title="Contact count",
-        color=cfg.plot_style.protein_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -295,7 +304,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="hbond_count",
         ylabel="Count",
         title="H-bond count",
-        color=cfg.plot_style.distance_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -305,7 +313,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="salt_bridge_count",
         ylabel="Count",
         title="Salt-bridge count",
-        color=cfg.plot_style.accent_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -316,7 +323,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="rg_A",
         ylabel="Radius of gyration (Å)",
         title="Radius of gyration (Å)",
-        color=cfg.plot_style.protein_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -326,7 +332,6 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         value_suffix="buried_surface_A2",
         ylabel="Area (Å²)",
         title="Buried surface area (Å²)",
-        color=cfg.plot_style.accent_color,
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
@@ -360,30 +365,26 @@ def _run_waterbridge_replot(cfg: WorkflowConfig) -> str | None:
         return None
     rows = read_dict_csv(csv_path)
     time_ns = np.asarray([float(r["time_ns"]) for r in rows], dtype=float)
-    mean_key = "mean_n_bridging_waters" if "mean_n_bridging_waters" in rows[0] else "mean_count"
-    sd_key = "sd_n_bridging_waters" if "sd_n_bridging_waters" in rows[0] else "sd_count"
-    mean_count = np.asarray([float(r[mean_key]) for r in rows], dtype=float)
-    sd_count = np.asarray([float(r[sd_key]) for r in rows], dtype=float)
     count_stack = _replica_stack(rows, "count")
-    replica_trend_series(
+    count_labels = _replica_labels(rows, "count")
+    publication_replicate_series(
         time_ns,
         count_stack,
         "Number of bridging waters",
         water_root / "waterbridge_count_combined",
         cfg.plot_style,
         title="Strict water-bridge count",
-        color=cfg.plot_style.distance_color,
+        replicate_labels=count_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
-    summary_band_series(
+    publication_replicate_series(
         time_ns,
-        mean_count,
-        sd_count,
+        count_stack,
         "Number of bridging waters",
         water_root / "waterbridge_count_replot",
         cfg.plot_style,
         title="Strict water-bridge count replot",
-        color=cfg.plot_style.distance_color,
+        replicate_labels=count_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
     return str(water_root.resolve())
