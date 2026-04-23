@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 from matplotlib.colors import to_rgb
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from scipy.stats import t as student_t
 
 from ..config import PlotStyleConfig
 from .theme import finalize_axes, publication_style, save_figure
@@ -20,6 +24,13 @@ def _blend_color(color: str, target: str, fraction: float) -> tuple[float, float
     base = np.asarray(to_rgb(color), dtype=float)
     end = np.asarray(to_rgb(target), dtype=float)
     return tuple((1.0 - fraction) * base + fraction * end)
+
+
+def _line_shadow(linewidth: float) -> list[pe.AbstractPathEffect]:
+    return [
+        pe.Stroke(linewidth=linewidth + 1.1, foreground=(1.0, 1.0, 1.0, 0.95)),
+        pe.Normal(),
+    ]
 
 
 def _rolling_window_size(n_points: int, window_fraction: float) -> int:
@@ -81,6 +92,165 @@ def _spread_positions(values, lower: float, upper: float, min_gap: float) -> np.
     out = np.empty_like(sorted_vals)
     out[order] = sorted_vals
     return out
+
+
+def _mean_and_confidence_interval(arr2d, confidence: float = 0.95) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    arr = np.asarray(arr2d, dtype=float)
+    if arr.ndim != 2:
+        raise ValueError("Expected a 2D replicate stack")
+    valid = np.isfinite(arr)
+    counts = valid.sum(axis=0)
+    mean = np.full(arr.shape[1], np.nan, dtype=float)
+    has_data = counts > 0
+    if np.any(has_data):
+        mean[has_data] = np.where(valid, arr, 0.0).sum(axis=0)[has_data] / counts[has_data]
+
+    sd = np.zeros(arr.shape[1], dtype=float)
+    enough = counts > 1
+    if np.any(enough):
+        centered = np.where(valid, arr - mean, 0.0)
+        variance = np.where(
+            enough,
+            np.sum(centered ** 2, axis=0) / np.maximum(counts - 1, 1),
+            0.0,
+        )
+        sd[enough] = np.sqrt(variance[enough])
+
+    half_width = np.zeros(arr.shape[1], dtype=float)
+    if np.any(enough):
+        crit = np.ones(arr.shape[1], dtype=float)
+        for n_reps in np.unique(counts[enough]):
+            crit[counts == n_reps] = float(student_t.ppf(0.5 + confidence / 2.0, int(n_reps) - 1))
+        half_width[enough] = crit[enough] * sd[enough] / np.sqrt(counts[enough])
+
+    lower = mean - half_width
+    upper = mean + half_width
+    if np.nanmin(arr) >= -1e-12:
+        lower = np.maximum(lower, 0.0)
+    return mean, lower, upper
+
+
+def _replicate_handles(
+    replicate_colors: list[str],
+    replicate_labels: list[str],
+    mean_color: str,
+    band_color: str,
+    confidence: float,
+) -> list:
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=color,
+            linewidth=1.5,
+            label=label,
+        )
+        for color, label in zip(replicate_colors, replicate_labels)
+    ]
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            color=mean_color,
+            linewidth=2.4,
+            label="Mean",
+        )
+    )
+    handles.append(
+        Patch(
+            facecolor=band_color,
+            edgecolor="none",
+            alpha=0.28,
+            label=f"{int(round(confidence * 100.0))}% CI",
+        )
+    )
+    return handles
+
+
+def draw_publication_replicate_summary(
+    ax,
+    time_ns,
+    arr2d,
+    style: PlotStyleConfig,
+    *,
+    replicate_labels: list[str] | None = None,
+    rolling_window_fraction: float = 0.10,
+    confidence: float = 0.95,
+    replicate_colors: list[str] | None = None,
+    mean_color: str | None = None,
+    band_color: str | None = None,
+    show_endpoint: bool = True,
+):
+    arr2d = np.asarray(arr2d, dtype=float)
+    time_arr = np.asarray(time_ns, dtype=float)
+    n_replicas = arr2d.shape[0]
+    replicate_labels = replicate_labels or [f"Replica {idx + 1}" for idx in range(n_replicas)]
+    palette = replicate_colors or style.categorical_palette
+    line_colors = [palette[idx % len(palette)] for idx in range(n_replicas)]
+    mean_line_color = mean_color or style.mean_line_color
+    interval_color = band_color or _blend_color(style.band_color, "#FFFFFF", 0.35)
+
+    display_rows = np.vstack([smooth_series(row, rolling_window_fraction) for row in arr2d])
+    mean_s, lower_s, upper_s = _mean_and_confidence_interval(display_rows, confidence=confidence)
+
+    ax.fill_between(
+        time_arr,
+        lower_s,
+        upper_s,
+        alpha=0.18,
+        linewidth=0.0,
+        color=interval_color,
+        zorder=1,
+    )
+    for color, label, row_s in zip(line_colors, replicate_labels, display_rows):
+        line = ax.plot(
+            time_arr,
+            row_s,
+            linewidth=max(style.thin_line_width + 0.2, 1.05),
+            alpha=0.95,
+            color=color,
+            label=label,
+            zorder=2,
+        )[0]
+        line.set_path_effects(_line_shadow(line.get_linewidth()))
+
+    mean_line = ax.plot(
+        time_arr,
+        mean_s,
+        linewidth=style.line_width + 0.65,
+        color=mean_line_color,
+        zorder=3,
+    )[0]
+    mean_line.set_path_effects(_line_shadow(mean_line.get_linewidth()))
+    if show_endpoint and time_arr.size > 0:
+        x_end, y_end = _last_finite_point(time_arr, mean_s)
+        if np.isfinite(y_end):
+            ax.scatter(
+                [x_end],
+                [y_end],
+                s=max(style.marker_size * 6.0, 18.0),
+                color=mean_line_color,
+                edgecolors="white",
+                linewidths=0.8,
+                zorder=4,
+            )
+    ax.margins(x=0.01)
+    return {
+        "mean": mean_s,
+        "lower": lower_s,
+        "upper": upper_s,
+        "replicate_colors": line_colors,
+        "replicate_labels": list(replicate_labels),
+        "mean_color": mean_line_color,
+        "band_color": interval_color,
+        "legend_handles": _replicate_handles(
+            line_colors,
+            list(replicate_labels),
+            mean_line_color,
+            interval_color,
+            confidence,
+        ),
+    }
 
 
 def draw_summary_band(
@@ -222,6 +392,44 @@ def summary_band_series(
             rolling_window_fraction=rolling_window_fraction,
         )
         finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        save_figure(fig, out_base, style)
+
+
+def publication_replicate_series(
+    time_ns,
+    arr2d,
+    ylabel,
+    out_base,
+    style: PlotStyleConfig,
+    *,
+    title=None,
+    xlabel="Time (ns)",
+    replicate_labels: list[str] | None = None,
+    rolling_window_fraction: float = 0.10,
+    figsize: tuple[float, float] = (7.2, 4.6),
+    confidence: float = 0.95,
+    legend_ncol: int = 5,
+):
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=figsize)
+        payload = draw_publication_replicate_summary(
+            ax,
+            time_ns,
+            arr2d,
+            style,
+            replicate_labels=replicate_labels,
+            rolling_window_fraction=rolling_window_fraction,
+            confidence=confidence,
+        )
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        ax.legend(
+            handles=payload["legend_handles"],
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=legend_ncol,
+            borderaxespad=0.0,
+        )
         save_figure(fig, out_base, style)
 
 
