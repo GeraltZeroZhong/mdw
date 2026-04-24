@@ -7,9 +7,73 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, to_hex, to_rgb
 from matplotlib.ticker import AutoMinorLocator
 
 from ..config import PlotStyleConfig
+from ..config.plot_style_defaults import (
+    SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP as MDW_CONTINUOUS_CMAP,
+    SCIENTIFIC_TEAL_PINK_DIVERGING_CMAP as MDW_DIVERGING_CMAP,
+)
+
+
+def blend_color(color: str, target: str = "#FFFFFF", fraction: float = 0.5) -> str:
+    fraction = float(max(0.0, min(1.0, fraction)))
+    base_rgb = to_rgb(color)
+    target_rgb = to_rgb(target)
+    return to_hex(tuple((1.0 - fraction) * base + fraction * tgt for base, tgt in zip(base_rgb, target_rgb)))
+
+
+def subtle_fill_color(style: PlotStyleConfig) -> str:
+    return blend_color(style.band_color, "#FFFFFF", 0.68)
+
+
+def subtle_edge_color(style: PlotStyleConfig) -> str:
+    return blend_color(style.grid_color, "#FFFFFF", 0.18)
+
+
+def contrast_text_color(color, style: PlotStyleConfig) -> str:
+    rgb = to_rgb(color)
+    luminance = float(rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722)
+    return "#FFFFFF" if luminance < 0.52 else style.spine_color
+
+
+def _continuous_colormap(style: PlotStyleConfig) -> LinearSegmentedColormap:
+    return LinearSegmentedColormap.from_list(
+        MDW_CONTINUOUS_CMAP,
+        [
+            "#FFFFFF",
+            style.band_color,
+            style.protein_color,
+            style.distance_color,
+            style.potential_energy_color,
+        ],
+    )
+
+
+def _diverging_colormap(style: PlotStyleConfig) -> LinearSegmentedColormap:
+    return LinearSegmentedColormap.from_list(
+        MDW_DIVERGING_CMAP,
+        [
+            style.protein_color,
+            "#FFFFFF",
+            style.accent_color,
+        ],
+    )
+
+
+def resolve_colormap(cmap, style: PlotStyleConfig, *, diverging: bool = False):
+    if isinstance(cmap, str):
+        name = cmap.strip()
+        if name == MDW_CONTINUOUS_CMAP:
+            return _continuous_colormap(style)
+        if name == MDW_DIVERGING_CMAP:
+            return _diverging_colormap(style)
+        if name:
+            return name
+    elif cmap is not None:
+        return cmap
+    return _diverging_colormap(style) if diverging else _continuous_colormap(style)
 
 
 def _sans_serif_stack(style: PlotStyleConfig) -> list[str]:

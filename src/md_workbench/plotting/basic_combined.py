@@ -548,7 +548,7 @@ def plot_interaction_heatmaps(
         ylabel="Residue",
         vmin=0.0,
         vmax=1.0,
-        cmap="Blues",
+        cmap=style.cmap_continuous,
         annotate=True,
         annotation_format="{:.0%}",
         annotation_min_abs=0.30,

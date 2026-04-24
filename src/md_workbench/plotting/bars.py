@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 
 from ..config import PlotStyleConfig
-from .theme import finalize_axes, publication_style, save_figure
+from .theme import finalize_axes, publication_style, save_figure, subtle_fill_color
 
 
 def _bar_colors(values, style: PlotStyleConfig):
@@ -75,9 +75,10 @@ def ranked_lollipop(
     with publication_style(style):
         fig, ax = plt.subplots(figsize=(7.5, height))
         y = np.arange(len(labels_arr))
+        row_fill = subtle_fill_color(style)
         for idx in range(len(labels_arr)):
             if idx % 2 == 0:
-                ax.axhspan(idx - 0.5, idx + 0.5, color="#F8FAFC", zorder=0)
+                ax.axhspan(idx - 0.5, idx + 0.5, color=row_fill, zorder=0)
         ax.hlines(y, 0.0, means_arr, color=color, linewidth=2.0, alpha=0.30, zorder=1)
         lower = np.clip(means_arr - np.maximum(sds_arr, 0.0), 0.0, None)
         upper = np.minimum(means_arr + np.maximum(sds_arr, 0.0), axis_limit)
@@ -164,9 +165,10 @@ def ranked_distance_lollipop(
     with publication_style(style):
         fig, ax = plt.subplots(figsize=(8.2, height))
         y = np.arange(len(labels_arr))
+        row_fill = subtle_fill_color(style)
         for idx in range(len(labels_arr)):
             if idx % 2 == 0:
-                ax.axhspan(idx - 0.5, idx + 0.5, color="#F8FAFC", zorder=0)
+                ax.axhspan(idx - 0.5, idx + 0.5, color=row_fill, zorder=0)
         ax.hlines(y, 0.0, means_arr, color=color, linewidth=2.15, alpha=0.24, zorder=1)
         lower = np.clip(means_arr - np.maximum(sds_arr, 0.0), 0.0, None)
         upper = np.minimum(means_arr + np.maximum(sds_arr, 0.0), axis_limit)
