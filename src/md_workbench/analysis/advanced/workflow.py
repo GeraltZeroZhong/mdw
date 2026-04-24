@@ -6,7 +6,7 @@ import mdtraj as md
 import numpy as np
 
 from ...config import AdvancedAnalysisConfig, PlotSelectionConfig, PlotStyleConfig
-from ...core import check_input_file, ensure_dir, require_nonempty_file, resolve_replica_dirs, save_csv, write_json
+from ...core import check_input_file, ensure_dir, find_ligand_residue, require_nonempty_file, resolve_replica_dirs, save_csv, write_json
 from ...core.progress import ProgressCallback, emit_progress
 from ...plotting.advanced import (
     plot_chapman_kolmogorov_test,
@@ -22,6 +22,7 @@ from ...plotting.advanced import (
     scatter_by_replica,
     scatter_clusters,
 )
+from ..imaging import image_ligand_near_protein
 from ..basic.rms import build_average_reference
 from .features import featurize_traj, pick_feature_atoms
 from .msm import fit_msm_on_active_symbols, fit_population_connected_msm
@@ -280,10 +281,21 @@ def run_advanced_analysis(
             empty_hint="这通常表示 MD 生产阶段没有写出任何轨迹帧，请确认 production_steps >= dcd_interval。",
         )
         try:
-            traj = md.load(str(dcd), top=str(top))
+            topology_frame = md.load_pdb(str(top))
+        except OSError as exc:
+            raise ValueError(f"{replica_dir.name}: 无法读取拓扑文件 {top}") from exc
+        topology_ligand = find_ligand_residue(topology_frame.topology)
+        solute_atom_indices = sorted(
+            set(map(int, topology_frame.topology.select("protein"))) | {int(atom.index) for atom in topology_ligand.atoms}
+        )
+        if not solute_atom_indices:
+            raise ValueError(f"{replica_dir.name}: missing protein or ligand atoms")
+        try:
+            traj = md.load(str(dcd), top=str(top), atom_indices=solute_atom_indices)
         except OSError as exc:
             raise ValueError(f"{replica_dir.name}: 无法读取轨迹文件 {dcd}") from exc
-        trajectories.append(traj)
+        ligand_residue = find_ligand_residue(traj.topology)
+        trajectories.append(image_ligand_near_protein(traj, ligand_residue))
 
     emit_progress(progress_callback, 1, step_total, "advanced_analysis", "Aligning trajectories to the reference structure")
     align_atoms = trajectories[0].topology.select(cfg.align_selection)

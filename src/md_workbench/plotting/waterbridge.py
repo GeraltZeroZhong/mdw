@@ -51,25 +51,32 @@ def plot_combined_waterbridge(
         ],
     )
 
-    values = {}
+    per_replica_values = []
+    residue_labels = set()
     for result in replica_results:
         local = {row["protein_residue"]: row["waterbridge_occupancy"] for row in result["residue_rows"]}
-        for key, value in local.items():
-            values.setdefault(key, []).append(value)
+        per_replica_values.append(local)
+        residue_labels.update(local)
 
     rows = []
-    for key, arr in values.items():
-        arr = np.asarray(arr, dtype=float)
+    for key in residue_labels:
+        arr = np.asarray([local.get(key, 0.0) for local in per_replica_values], dtype=float)
+        present_count = sum(1 for local in per_replica_values if key in local)
         rows.append(
             {
                 "protein_residue": key,
                 "waterbridge_occupancy_mean": float(arr.mean()),
                 "waterbridge_occupancy_sd": float(arr.std(ddof=1) if len(arr) > 1 else 0.0),
-                "n_replicas": int(len(arr)),
+                "n_replicas": int(len(replica_results)),
+                "n_present_replicas": int(present_count),
             }
         )
     rows.sort(key=lambda x: x["waterbridge_occupancy_mean"], reverse=True)
-    write_dict_csv(combined / "waterbridge_residue_occupancy_combined.csv", rows, ["protein_residue", "waterbridge_occupancy_mean", "waterbridge_occupancy_sd", "n_replicas"])
+    write_dict_csv(
+        combined / "waterbridge_residue_occupancy_combined.csv",
+        rows,
+        ["protein_residue", "waterbridge_occupancy_mean", "waterbridge_occupancy_sd", "n_replicas", "n_present_replicas"],
+    )
     if rows and (plot_selection is None or plot_selection.enabled("waterbridge_combined_occupancy")):
         top_rows = rows[:20]
         ranked_lollipop(

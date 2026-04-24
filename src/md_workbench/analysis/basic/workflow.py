@@ -44,17 +44,18 @@ def run_basic_analysis(
                 subdetail=detail,
             )
 
-        replica_results.append(
-            process_replica(
-                replica_dir,
-                cfg.ligand_sdf,
-                out_dir,
-                cfg,
-                style,
-                plot_selection,
-                progress_callback=_replica_progress,
-            )
+        shared_reference = replica_results[0]["analysis_reference"] if replica_results else None
+        result = process_replica(
+            replica_dir,
+            cfg.ligand_sdf,
+            out_dir,
+            cfg,
+            style,
+            plot_selection,
+            progress_callback=_replica_progress,
+            reference=shared_reference,
         )
+        replica_results.append(result)
         emit_progress(
             progress_callback,
             idx,
