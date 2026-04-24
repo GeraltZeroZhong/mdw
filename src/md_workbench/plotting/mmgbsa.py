@@ -64,7 +64,6 @@ def plot_mmgbsa_delta_total_heatmap(replica_names, residue_labels, matrix, out_b
         xlabel="Replica",
         ylabel="Residue",
         center=0.0,
-        cmap="RdBu_r",
         cbar_label="Contribution (kcal/mol)",
         annotate=False,
         x_rotation=35.0,

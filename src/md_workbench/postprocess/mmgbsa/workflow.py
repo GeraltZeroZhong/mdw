@@ -281,6 +281,20 @@ def _load_existing_replica_results(analysis_root: Path, cfg: MMGBSAConfig) -> li
     return reused
 
 
+def _clear_generated_replica_outputs(replica_out_dir: Path, cfg: MMGBSAConfig) -> None:
+    generated_names = {
+        Path(cfg.final_dat).name,
+        Path(cfg.final_csv).name,
+        Path(cfg.per_residue_dat).name,
+        Path(cfg.per_residue_csv).name,
+        "mmpbsa_summary_parsed.csv",
+    }
+    for name in generated_names:
+        path = replica_out_dir / name
+        if path.exists() and path.is_file():
+            path.unlink()
+
+
 def summarize_mmgbsa_postprocess_result(result: dict | None) -> str:
     if not result:
         return "MM/GBSA postprocess completed without a result payload"
@@ -518,12 +532,26 @@ def run_mmgbsa_postprocess(
 ):
     analysis_root = ensure_dir(cfg.analysis_root)
     results = []
+    reused = _load_existing_replica_results(analysis_root, cfg) if cfg.reuse_existing_outputs else []
+    if reused:
+        write_json(analysis_root / "replica_mmgbsa_status.json", reused)
+        combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
+        return {
+            "analysis_root": str(Path(analysis_root).resolve()),
+            "replica_results": reused,
+            "combined": combined,
+            "status_counts": {"reused_existing_outputs": len(reused)},
+            "status": "ok",
+            "detail": f"Reused existing MM/GBSA outputs for {len(reused)} replicas",
+        }
     if cfg.auto_run:
         source_root = Path(cfg.source_root)
         replica_dirs = sorted([p for p in source_root.glob("replica_*") if p.is_dir()])
         if replica_dirs:
             for replica_dir in replica_dirs:
                 replica_out = ensure_dir(analysis_root / replica_dir.name)
+                if not cfg.reuse_existing_outputs:
+                    _clear_generated_replica_outputs(replica_out, cfg)
                 run_result = _auto_run_replica(replica_dir, replica_out, cfg)
                 item = {"replica": replica_dir.name, "run": run_result}
                 item.update(_parse_replica_outputs(replica_out, cfg))
@@ -540,7 +568,7 @@ def run_mmgbsa_postprocess(
                 status = "ok"
                 detail = f"Completed MM/GBSA for {parsed_count}/{replica_count} replicas"
             else:
-                reused = _load_existing_replica_results(analysis_root, cfg)
+                reused = _load_existing_replica_results(analysis_root, cfg) if cfg.reuse_existing_outputs else []
                 if reused:
                     write_json(analysis_root / "replica_mmgbsa_status.json", reused)
                     combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
@@ -572,7 +600,7 @@ def run_mmgbsa_postprocess(
                 "status": status,
                 "detail": detail,
             }
-        reused = _load_existing_replica_results(analysis_root, cfg)
+        reused = _load_existing_replica_results(analysis_root, cfg) if cfg.reuse_existing_outputs else []
         if reused:
             write_json(analysis_root / "replica_mmgbsa_status.json", reused)
             combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
@@ -584,6 +612,19 @@ def run_mmgbsa_postprocess(
                 "status": "ok",
                 "detail": f"Reused existing MM/GBSA outputs for {len(reused)} replicas",
             }
+
+    reused = _load_existing_replica_results(analysis_root, cfg) if cfg.reuse_existing_outputs else []
+    if reused:
+        write_json(analysis_root / "replica_mmgbsa_status.json", reused)
+        combined = _combined_outputs(reused, analysis_root, cfg, style, plot_selection)
+        return {
+            "analysis_root": str(Path(analysis_root).resolve()),
+            "replica_results": reused,
+            "combined": combined,
+            "status_counts": {"reused_existing_outputs": len(reused)},
+            "status": "ok",
+            "detail": f"Reused existing MM/GBSA outputs for {len(reused)} replicas",
+        }
 
     outputs = _single_root_existing_files(cfg, style, plot_selection)
     usable_keys = {k for k in outputs.keys() if k != "analysis_root"}

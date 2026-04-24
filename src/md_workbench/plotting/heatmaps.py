@@ -7,7 +7,7 @@ from matplotlib.colors import TwoSlopeNorm, to_rgb
 from matplotlib.patches import Rectangle
 
 from ..config import PlotStyleConfig
-from .theme import finalize_axes, publication_style, save_figure
+from .theme import contrast_text_color, finalize_axes, publication_style, resolve_colormap, save_figure, subtle_edge_color, subtle_fill_color
 
 
 def _sparse_tick_spec(labels, max_labels: int):
@@ -45,11 +45,11 @@ def _heatmap_limits(arr, vmin=None, vmax=None, center: float | None = None):
     return vmin, vmax, TwoSlopeNorm(vmin=float(vmin), vcenter=float(center), vmax=float(vmax))
 
 
-def _annotation_color(value: float, norm) -> str:
+def _annotation_color(value: float, norm, style: PlotStyleConfig) -> str:
     if norm is None or not np.isfinite(value):
-        return "#1F2937"
+        return style.spine_color
     mapped = float(norm(value))
-    return "white" if mapped <= 0.22 or mapped >= 0.78 else "#1F2937"
+    return "#FFFFFF" if mapped <= 0.22 or mapped >= 0.78 else style.spine_color
 
 
 def _blend_with_white(color: str, weight: float) -> tuple[float, float, float]:
@@ -59,10 +59,8 @@ def _blend_with_white(color: str, weight: float) -> tuple[float, float, float]:
     return tuple(white * (1.0 - clipped) + rgb * clipped)
 
 
-def _tile_text_color(color: tuple[float, float, float]) -> str:
-    rgb = np.asarray(color, dtype=float)
-    luminance = float(rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722)
-    return "white" if luminance < 0.52 else "#1F2937"
+def _tile_text_color(color: tuple[float, float, float], style: PlotStyleConfig) -> str:
+    return contrast_text_color(color, style)
 
 
 def matrix_heatmap(
@@ -96,7 +94,7 @@ def matrix_heatmap(
             arr,
             aspect="auto",
             interpolation="nearest",
-            cmap=cmap or ("RdBu_r" if center is not None else style.cmap_continuous),
+            cmap=resolve_colormap(cmap, style, diverging=center is not None),
             vmin=None if norm is not None else vmin_eff,
             vmax=None if norm is not None else vmax_eff,
             norm=norm,
@@ -110,7 +108,7 @@ def matrix_heatmap(
         if arr.size <= 180:
             ax.set_xticks(np.arange(-0.5, arr.shape[1], 1), minor=True)
             ax.set_yticks(np.arange(-0.5, arr.shape[0], 1), minor=True)
-            ax.grid(which="minor", color="white", linestyle="-", linewidth=0.55, alpha=0.35)
+            ax.grid(which="minor", color=subtle_edge_color(style), linestyle="-", linewidth=0.55, alpha=0.42)
             ax.tick_params(which="minor", bottom=False, left=False)
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.ax.tick_params(labelsize=max(style.tick_size - 0.6, 6.5))
@@ -133,7 +131,7 @@ def matrix_heatmap(
                         ha="center",
                         va="center",
                         fontsize=max(style.tick_size - 1.5, 6.5),
-                        color=_annotation_color(value, im.norm),
+                        color=_annotation_color(value, im.norm, style),
                     )
         save_figure(fig, out_base, style)
 
@@ -165,17 +163,19 @@ def interaction_fingerprint_heatmap(
         fig, ax = plt.subplots(figsize=(width, height))
         ax.set_xlim(-0.5, n_cols - 0.5)
         ax.set_ylim(n_rows - 0.5, -0.5)
+        tile_bg = subtle_fill_color(style)
+        tile_edge = subtle_edge_color(style)
         for i in range(n_rows):
             if i % 2 == 0:
-                ax.axhspan(i - 0.5, i + 0.5, color="#F8FAFC", zorder=0)
+                ax.axhspan(i - 0.5, i + 0.5, color=tile_bg, zorder=0)
             for j in range(n_cols):
                 ax.add_patch(
                     Rectangle(
                         (j - 0.46, i - 0.46),
                         0.92,
                         0.92,
-                        facecolor="#F8FAFC",
-                        edgecolor="#E5E7EB",
+                        facecolor=tile_bg,
+                        edgecolor=tile_edge,
                         linewidth=0.85,
                         zorder=1,
                     )
@@ -203,7 +203,7 @@ def interaction_fingerprint_heatmap(
                         ha="center",
                         va="center",
                         fontsize=max(style.tick_size - 1.1, 6.6),
-                        color=_tile_text_color(face),
+                        color=_tile_text_color(face, style),
                         zorder=3,
                     )
         ax.set_xticks(np.arange(n_cols))

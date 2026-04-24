@@ -12,6 +12,7 @@ from ...plotting.advanced import (
     plot_chapman_kolmogorov_test,
     plot_cluster_population,
     plot_fes,
+    plot_fes_from_csv,
     plot_lag_scan,
     plot_line_profile,
     plot_snapshot_grid,
@@ -337,7 +338,9 @@ def run_advanced_analysis(
     save_csv(Path(cfg.analysis_root) / "pca" / "explained_variance_ratio.csv", ["component", "explained_variance_ratio", "cumulative_explained_variance_ratio"], [[i + 1, float(v), float(np.cumsum(pca_evr)[i])] for i, v in enumerate(pca_evr)])
     if plot_pca:
         plot_line_profile(np.arange(1, len(pca_evr) + 1), pca_evr, Path(cfg.analysis_root) / "pca" / "explained_variance_ratio", "PC index", "Explained variance ratio", "PCA explained variance", style, color=style.accent_color)
-        plot_fes(X_pca[:, 0], X_pca[:, 1], Path(cfg.analysis_root) / "pca" / "free_energy_landscape_pc1_pc2", "PCA free-energy landscape", "PC1", "PC2", cfg.n_bins, cfg.temperature_K, cfg.kB_kcal_mol_K, style)
+        pca_fes_base = Path(cfg.analysis_root) / "pca" / "free_energy_landscape_pc1_pc2"
+        if not plot_fes_from_csv(pca_fes_base.with_suffix(".csv"), pca_fes_base, "PCA free-energy landscape", "PC1", "PC2", style):
+            plot_fes(X_pca[:, 0], X_pca[:, 1], pca_fes_base, "PCA free-energy landscape", "PC1", "PC2", cfg.n_bins, cfg.temperature_K, cfg.kB_kcal_mol_K, style)
         scatter_by_replica(X_pca[:, :2], replica_dirs, feature_list, Path(cfg.analysis_root) / "pca" / "pc1_pc2_scatter", "PC1", "PC2", "PCA projection by replica", style)
     save_projection_per_replica(replica_dirs, feature_list, X_pca, "pc", Path(cfg.analysis_root) / "per_replica_assignments", cfg.max_saved_components)
 
@@ -354,7 +357,9 @@ def run_advanced_analysis(
     except Exception:
         pass
     if plot_tica:
-        plot_fes(X_tica[:, 0], X_tica[:, 1], Path(cfg.analysis_root) / "tica" / "free_energy_landscape_tic1_tic2", "tICA free-energy landscape", "tIC1", "tIC2", cfg.n_bins, cfg.temperature_K, cfg.kB_kcal_mol_K, style)
+        tica_fes_base = Path(cfg.analysis_root) / "tica" / "free_energy_landscape_tic1_tic2"
+        if not plot_fes_from_csv(tica_fes_base.with_suffix(".csv"), tica_fes_base, "tICA free-energy landscape", "tIC1", "tIC2", style):
+            plot_fes(X_tica[:, 0], X_tica[:, 1], tica_fes_base, "tICA free-energy landscape", "tIC1", "tIC2", cfg.n_bins, cfg.temperature_K, cfg.kB_kcal_mol_K, style)
         scatter_by_replica(X_tica[:, :2], replica_dirs, feature_list, Path(cfg.analysis_root) / "tica" / "tic1_tic2_scatter", "tIC1", "tIC2", "tICA projection by replica", style)
 
     emit_progress(progress_callback, 5, step_total, "advanced_analysis", "Running clustering and assigning frames to states")

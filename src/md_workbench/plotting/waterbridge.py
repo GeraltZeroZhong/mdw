@@ -87,7 +87,7 @@ def plot_combined_waterbridge(
             style,
             title="Persistent water-bridge hotspots",
             xlabel="Water-bridge occupancy",
-            color=style.categorical_palette[4],
+            color=style.potential_energy_color,
         )
 
     min_n_frames = min(len(r["time_ns"]) for r in replica_results)

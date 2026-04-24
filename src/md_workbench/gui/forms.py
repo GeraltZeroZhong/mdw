@@ -293,6 +293,11 @@ ADVANCED_FIELD_GROUPS = {
     ],
     "plot_selection": [
         {
+            "title": "Replot and CSV Cache",
+            "hint": "Reuse existing analysis CSV files when rerendering figures or rerunning a workflow.",
+            "fields": ["plot_workflow_reuse_csv", "plot_workflow_basic_replot", "plot_workflow_waterbridge_replot", "plot_workflow_advanced_replot"],
+        },
+        {
             "title": "Basic Replica Figures",
             "hint": "Single-replica plots help inspect each trajectory independently.",
             "fields": [
@@ -320,7 +325,6 @@ ADVANCED_FIELD_GROUPS = {
                 "basic_combined_dssp",
                 "basic_combined_interaction_heatmaps",
                 "basic_combined_convergence",
-                "plot_workflow_basic_replot",
             ],
         },
         {
@@ -330,7 +334,6 @@ ADVANCED_FIELD_GROUPS = {
                 "waterbridge_replica_counts",
                 "waterbridge_combined_occupancy",
                 "waterbridge_combined_counts",
-                "plot_workflow_waterbridge_replot",
             ],
         },
         {
@@ -400,7 +403,7 @@ ADVANCED_FIELD_GROUPS = {
         {
             "title": "Execution",
             "hint": "Choose whether MM/GBSA runs automatically and whether failures should remain non-blocking.",
-            "fields": ["analysis_root", "source_root", "auto_run", "non_blocking", "use_mpi", "mpi_ranks", "startframe", "interval", "igb", "saltcon", "idecomp"],
+            "fields": ["analysis_root", "source_root", "auto_run", "reuse_existing_outputs", "non_blocking", "use_mpi", "mpi_ranks", "startframe", "interval", "igb", "saltcon", "idecomp"],
         },
         {
             "title": "Input Files",

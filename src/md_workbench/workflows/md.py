@@ -7,7 +7,15 @@ from pathlib import Path
 from ..config import WorkflowConfig
 from ..core import ensure_project_layout, infer_run_input_paths, normalize_workflow_paths, organize_outputs, preflight_validate
 from ..core.progress import ProgressCallback, ProgressEvent, emit_progress
-from .plot import run_plot_postprocess
+from .plot import (
+    reusable_advanced_csv_available,
+    reusable_basic_csv_available,
+    reusable_waterbridge_csv_available,
+    run_advanced_replot_from_csv,
+    run_basic_replot_from_csv,
+    run_plot_postprocess,
+    run_waterbridge_replot_from_csv,
+)
 
 
 def _resolve_md_inputs(cfg: WorkflowConfig) -> None:
@@ -30,6 +38,21 @@ def _bind_analysis_inputs_to_md_outputs(cfg: WorkflowConfig) -> None:
     cfg.waterbridge.dcd_interval_steps = cfg.run.dcd_interval
     cfg.advanced.replica_root = replica_root
     cfg.mmgbsa.source_root = replica_root
+
+
+def _bind_existing_analysis_inputs(cfg: WorkflowConfig) -> None:
+    ligand_candidates = [
+        cfg.basic.ligand_sdf,
+        cfg.docking.extracted_pose_sdf,
+        cfg.run.ligand_sdf,
+        cfg.docking.ligand_output_sdf,
+        cfg.docking.ligand_sdf_input,
+    ]
+    for candidate in ligand_candidates:
+        candidate_path = Path(str(candidate).strip()) if str(candidate).strip() else None
+        if candidate_path is not None and candidate_path.exists():
+            cfg.basic.ligand_sdf = str(candidate_path.resolve())
+            break
 
 
 def _summarize_outputs(cfg: WorkflowConfig, outputs: dict) -> None:
@@ -75,6 +98,7 @@ def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallbac
         raise ValueError(f"Workflow preflight validation failed:\n{bullets}")
     _resolve_md_inputs(cfg)
     _bind_analysis_inputs_to_md_outputs(cfg)
+    _bind_existing_analysis_inputs(cfg)
     outputs = {}
     if cfg.do_prep:
         emit_progress(progress_callback, completed_units, total_units, "prep", "Preparing receptor and ligand inputs")
@@ -107,98 +131,130 @@ def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallbac
         completed_units += md_units
         emit_progress(progress_callback, completed_units, total_units, "md", f"Completed {cfg.run.n_replicas} MD replicas")
     if cfg.do_basic_analysis:
-        emit_progress(progress_callback, completed_units, total_units, "basic_analysis", "Running basic analysis")
-        from ..analysis import run_basic_analysis
+        if cfg.plot_selection.enabled("plot_workflow_reuse_csv") and reusable_basic_csv_available(cfg):
+            emit_progress(progress_callback, completed_units, total_units, "basic_analysis", "Reusing existing basic-analysis CSV outputs")
+            outputs["basic_replot_dir"] = run_basic_replot_from_csv(cfg)
+            outputs.setdefault("reused_csv_sections", []).append("basic")
+            outputs.setdefault("replotted_from_csv_sections", []).append("basic")
+        else:
+            emit_progress(progress_callback, completed_units, total_units, "basic_analysis", "Running basic analysis")
+            from ..analysis import run_basic_analysis
 
-        def _basic_progress(event: ProgressEvent) -> None:
-            emit_progress(
-                progress_callback,
-                completed_units,
-                total_units,
-                "basic_analysis",
-                event.detail,
-                subcurrent=event.subcurrent if event.subtotal > 0 else event.current,
-                subtotal=event.subtotal if event.subtotal > 0 else event.total,
-                subdetail=event.subdetail or event.detail,
+            def _basic_progress(event: ProgressEvent) -> None:
+                emit_progress(
+                    progress_callback,
+                    completed_units,
+                    total_units,
+                    "basic_analysis",
+                    event.detail,
+                    subcurrent=event.subcurrent if event.subtotal > 0 else event.current,
+                    subtotal=event.subtotal if event.subtotal > 0 else event.total,
+                    subdetail=event.subdetail or event.detail,
+                )
+
+            outputs["basic_analysis"] = run_basic_analysis(
+                cfg.basic,
+                cfg.plot_style,
+                cfg.plot_selection,
+                progress_callback=_basic_progress,
             )
-
-        outputs["basic_analysis"] = run_basic_analysis(
-            cfg.basic,
-            cfg.plot_style,
-            cfg.plot_selection,
-            progress_callback=_basic_progress,
-        )
         completed_units += 1
         emit_progress(progress_callback, completed_units, total_units, "basic_analysis", "Completed basic analysis")
     if cfg.do_waterbridge_analysis:
-        emit_progress(progress_callback, completed_units, total_units, "waterbridge_analysis", "Running water-bridge analysis")
-        from ..analysis import run_waterbridge_analysis
+        if cfg.plot_selection.enabled("plot_workflow_reuse_csv") and reusable_waterbridge_csv_available(cfg):
+            emit_progress(progress_callback, completed_units, total_units, "waterbridge_analysis", "Reusing existing water-bridge CSV outputs")
+            outputs["waterbridge_replot_dir"] = run_waterbridge_replot_from_csv(cfg)
+            outputs.setdefault("reused_csv_sections", []).append("waterbridge")
+            outputs.setdefault("replotted_from_csv_sections", []).append("waterbridge")
+        else:
+            emit_progress(progress_callback, completed_units, total_units, "waterbridge_analysis", "Running water-bridge analysis")
+            from ..analysis import run_waterbridge_analysis
 
-        def _waterbridge_progress(event: ProgressEvent) -> None:
-            emit_progress(
-                progress_callback,
-                completed_units,
-                total_units,
-                "waterbridge_analysis",
-                event.detail,
-                subcurrent=event.subcurrent if event.subtotal > 0 else event.current,
-                subtotal=event.subtotal if event.subtotal > 0 else event.total,
-                subdetail=event.subdetail or event.detail,
+            def _waterbridge_progress(event: ProgressEvent) -> None:
+                emit_progress(
+                    progress_callback,
+                    completed_units,
+                    total_units,
+                    "waterbridge_analysis",
+                    event.detail,
+                    subcurrent=event.subcurrent if event.subtotal > 0 else event.current,
+                    subtotal=event.subtotal if event.subtotal > 0 else event.total,
+                    subdetail=event.subdetail or event.detail,
+                )
+
+            outputs["waterbridge_analysis"] = run_waterbridge_analysis(
+                cfg.waterbridge,
+                cfg.plot_style,
+                cfg.plot_selection,
+                progress_callback=_waterbridge_progress,
             )
-
-        outputs["waterbridge_analysis"] = run_waterbridge_analysis(
-            cfg.waterbridge,
-            cfg.plot_style,
-            cfg.plot_selection,
-            progress_callback=_waterbridge_progress,
-        )
         completed_units += 1
         emit_progress(progress_callback, completed_units, total_units, "waterbridge_analysis", "Completed water-bridge analysis")
     if cfg.do_basic_analysis or cfg.do_waterbridge_analysis:
-        plot_units = int(cfg.do_basic_analysis) + int(cfg.do_waterbridge_analysis)
-        plot_offset = completed_units
+        basic_reused = "basic" in outputs.get("reused_csv_sections", [])
+        waterbridge_reused = "waterbridge" in outputs.get("reused_csv_sections", [])
+        plot_cfg = deepcopy(cfg)
+        plot_cfg.do_basic_analysis = bool(cfg.do_basic_analysis and not basic_reused)
+        plot_cfg.do_waterbridge_analysis = bool(cfg.do_waterbridge_analysis and not waterbridge_reused)
+        plot_cfg.do_advanced_analysis = False
+        plot_cfg.do_mmgbsa_postprocess = False
+        if plot_cfg.do_basic_analysis or plot_cfg.do_waterbridge_analysis:
+            plot_units = int(plot_cfg.do_basic_analysis) + int(plot_cfg.do_waterbridge_analysis)
+            plot_offset = completed_units
 
-        def _plot_progress(event: ProgressEvent) -> None:
-            total_plot_units = max(int(event.total), plot_units)
-            bounded_completed = min(max(int(event.current), 0), total_plot_units)
-            emit_progress(
-                progress_callback,
-                plot_offset + bounded_completed,
-                total_units,
-                event.stage,
-                event.detail,
+            def _plot_progress(event: ProgressEvent) -> None:
+                total_plot_units = max(int(event.total), plot_units)
+                bounded_completed = min(max(int(event.current), 0), total_plot_units)
+                emit_progress(
+                    progress_callback,
+                    plot_offset + bounded_completed,
+                    total_units,
+                    event.stage,
+                    event.detail,
+                )
+
+            plot_outputs = run_plot_postprocess(
+                plot_cfg,
+                progress_callback=_plot_progress,
+                include_mmgbsa_postprocess=False,
+                include_organize_outputs=False,
             )
-
-        plot_outputs = run_plot_postprocess(
-            cfg,
-            progress_callback=_plot_progress,
-            include_mmgbsa_postprocess=False,
-            include_organize_outputs=False,
-        )
-        outputs.update(plot_outputs)
-        completed_units += plot_units
+            replot_sections = plot_outputs.pop("replotted_from_csv_sections", [])
+            outputs.update(plot_outputs)
+            if replot_sections:
+                seen_replots = set(outputs.get("replotted_from_csv_sections", []))
+                outputs.setdefault("replotted_from_csv_sections", []).extend(
+                    section for section in replot_sections if section not in seen_replots
+                )
+            completed_units += plot_units
     if cfg.do_advanced_analysis:
-        emit_progress(progress_callback, completed_units, total_units, "advanced_analysis", "Running advanced analysis")
-        from ..analysis import run_advanced_analysis
+        if cfg.plot_selection.enabled("plot_workflow_reuse_csv") and reusable_advanced_csv_available(cfg):
+            emit_progress(progress_callback, completed_units, total_units, "advanced_analysis", "Reusing existing advanced-analysis CSV outputs")
+            outputs["advanced_replot_dir"] = run_advanced_replot_from_csv(cfg)
+            outputs.setdefault("reused_csv_sections", []).append("advanced")
+            outputs.setdefault("replotted_from_csv_sections", []).append("advanced")
+        else:
+            emit_progress(progress_callback, completed_units, total_units, "advanced_analysis", "Running advanced analysis")
+            from ..analysis import run_advanced_analysis
 
-        def _advanced_progress(event: ProgressEvent) -> None:
-            emit_progress(
-                progress_callback,
-                completed_units,
-                total_units,
-                "advanced_analysis",
-                event.detail,
-                subcurrent=event.current,
-                subtotal=event.total,
-                subdetail=event.detail,
+            def _advanced_progress(event: ProgressEvent) -> None:
+                emit_progress(
+                    progress_callback,
+                    completed_units,
+                    total_units,
+                    "advanced_analysis",
+                    event.detail,
+                    subcurrent=event.current,
+                    subtotal=event.total,
+                    subdetail=event.detail,
+                )
+
+            outputs["advanced_analysis"] = run_advanced_analysis(
+                cfg.advanced,
+                cfg.plot_style,
+                cfg.plot_selection,
+                progress_callback=_advanced_progress,
             )
-
-        outputs["advanced_analysis"] = run_advanced_analysis(
-            cfg.advanced,
-            cfg.plot_style,
-            cfg.plot_selection,
-            progress_callback=_advanced_progress,
-        )
         completed_units += 1
         emit_progress(progress_callback, completed_units, total_units, "advanced_analysis", "Completed advanced analysis")
     if cfg.do_mmgbsa_postprocess:

@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .plot_style_defaults import (
+    DEFAULT_PLOT_RENDERING,
+    SCIENTIFIC_TEAL_PINK_COLORS,
+    SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
+    default_categorical_palette,
+    default_plot_formats,
+)
+
 
 @dataclass
 class PrepConfig:
@@ -139,6 +147,7 @@ class MMGBSAConfig:
     analysis_root: str = "work/analysis/mmgbsa"
     source_root: str = "work/md"
     auto_run: bool = True
+    reuse_existing_outputs: bool = True
     non_blocking: bool = True
     use_mpi: bool = False
     mpi_ranks: int = 4
@@ -200,45 +209,45 @@ class PlotSelectionConfig:
     mmgbsa_per_frame: bool = True
     mmgbsa_per_residue: bool = True
 
+    plot_workflow_reuse_csv: bool = True
+    plot_workflow_advanced_replot: bool = True
+
     def enabled(self, name: str) -> bool:
         return bool(getattr(self, name, True))
 
 
 @dataclass
 class PlotStyleConfig:
-    formats: list[str] = field(default_factory=lambda: ["png", "svg"])
-    dpi: int = 600
-    font_family: str = "DejaVu Sans"
-    title_size: float = 10.6
-    label_size: float = 9.2
-    tick_size: float = 8.2
-    legend_size: float = 7.8
-    line_width: float = 1.8
-    thin_line_width: float = 0.95
-    marker_size: float = 4.6
-    axes_line_width: float = 0.9
-    grid_alpha: float = 0.1
-    show_grid: bool = True
-    transparent_background: bool = False
-    use_minor_ticks: bool = False
-    spine_color: str = "#2E3440"
-    grid_color: str = "#E5E9F0"
-    mean_line_color: str = "#111827"
-    band_color: str = "#C9CED6"
-    protein_color: str = "#4E79A7"
-    ligand_color: str = "#E15759"
-    distance_color: str = "#59A14F"
-    temperature_color: str = "#4E79A7"
-    density_color: str = "#9C755F"
-    potential_energy_color: str = "#B07AA1"
-    total_energy_color: str = "#59A14F"
-    bar_color: str = "#4E79A7"
-    accent_color: str = "#F28E2B"
-    cmap_continuous: str = "cividis"
-    categorical_palette: list[str] = field(default_factory=lambda: [
-        "#4E79A7", "#F28E2B", "#59A14F", "#E15759", "#76B7B2",
-        "#B07AA1", "#9C755F", "#BAB0AC", "#499894", "#D37295",
-    ])
+    formats: list[str] = field(default_factory=default_plot_formats)
+    dpi: int = DEFAULT_PLOT_RENDERING["dpi"]
+    font_family: str = DEFAULT_PLOT_RENDERING["font_family"]
+    title_size: float = DEFAULT_PLOT_RENDERING["title_size"]
+    label_size: float = DEFAULT_PLOT_RENDERING["label_size"]
+    tick_size: float = DEFAULT_PLOT_RENDERING["tick_size"]
+    legend_size: float = DEFAULT_PLOT_RENDERING["legend_size"]
+    line_width: float = DEFAULT_PLOT_RENDERING["line_width"]
+    thin_line_width: float = DEFAULT_PLOT_RENDERING["thin_line_width"]
+    marker_size: float = DEFAULT_PLOT_RENDERING["marker_size"]
+    axes_line_width: float = DEFAULT_PLOT_RENDERING["axes_line_width"]
+    grid_alpha: float = DEFAULT_PLOT_RENDERING["grid_alpha"]
+    show_grid: bool = DEFAULT_PLOT_RENDERING["show_grid"]
+    transparent_background: bool = DEFAULT_PLOT_RENDERING["transparent_background"]
+    use_minor_ticks: bool = DEFAULT_PLOT_RENDERING["use_minor_ticks"]
+    spine_color: str = SCIENTIFIC_TEAL_PINK_COLORS["spine_color"]
+    grid_color: str = SCIENTIFIC_TEAL_PINK_COLORS["grid_color"]
+    mean_line_color: str = SCIENTIFIC_TEAL_PINK_COLORS["mean_line_color"]
+    band_color: str = SCIENTIFIC_TEAL_PINK_COLORS["band_color"]
+    protein_color: str = SCIENTIFIC_TEAL_PINK_COLORS["protein_color"]
+    ligand_color: str = SCIENTIFIC_TEAL_PINK_COLORS["ligand_color"]
+    distance_color: str = SCIENTIFIC_TEAL_PINK_COLORS["distance_color"]
+    temperature_color: str = SCIENTIFIC_TEAL_PINK_COLORS["temperature_color"]
+    density_color: str = SCIENTIFIC_TEAL_PINK_COLORS["density_color"]
+    potential_energy_color: str = SCIENTIFIC_TEAL_PINK_COLORS["potential_energy_color"]
+    total_energy_color: str = SCIENTIFIC_TEAL_PINK_COLORS["total_energy_color"]
+    bar_color: str = SCIENTIFIC_TEAL_PINK_COLORS["bar_color"]
+    accent_color: str = SCIENTIFIC_TEAL_PINK_COLORS["accent_color"]
+    cmap_continuous: str = SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP
+    categorical_palette: list[str] = field(default_factory=default_categorical_palette)
 
 
 @dataclass

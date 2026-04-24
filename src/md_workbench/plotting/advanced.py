@@ -12,11 +12,11 @@ from scipy.ndimage import binary_dilation, gaussian_filter, minimum_filter
 from scipy.stats import gaussian_kde
 
 from ..config import PlotStyleConfig
-from ..core import save_csv, write_json
+from ..core import read_dict_csv, save_csv, write_json
 from .bars import vertical_bars
 from .heatmaps import matrix_heatmap
 from .snapshots import snapshot_grid
-from .theme import finalize_axes, publication_style, save_figure
+from .theme import finalize_axes, publication_style, resolve_colormap, save_figure, subtle_fill_color
 
 
 @dataclass(frozen=True)
@@ -193,11 +193,12 @@ def _plot_fes_3d(surface, out_base, title, xlabel, ylabel, display_cap, basin_in
     with publication_style(style):
         fig = plt.figure(figsize=(7.8, 5.8))
         ax = fig.add_subplot(111, projection="3d")
+        cmap = resolve_colormap(style.cmap_continuous, style)
         mesh = ax.plot_surface(
             surface.x,
             surface.y,
             z_surface,
-            cmap=style.cmap_continuous,
+            cmap=cmap,
             linewidth=0.0,
             antialiased=True,
             shade=True,
@@ -212,7 +213,7 @@ def _plot_fes_3d(surface, out_base, title, xlabel, ylabel, display_cap, basin_in
             zdir="z",
             offset=z_floor,
             levels=contour_levels,
-            cmap=style.cmap_continuous,
+            cmap=cmap,
             linewidths=max(0.7, style.thin_line_width),
             alpha=0.92,
         )
@@ -302,7 +303,7 @@ def plot_fes(x, y, out_base, title, xlabel, ylabel, n_bins, temperature_K, kB_kc
     y_span = max(float(np.ptp(y_points)), 1.0)
     with publication_style(style):
         fig, ax = plt.subplots(figsize=(6.4, 5.4))
-        mesh = ax.contourf(surface.x, surface.y, energy_plot, levels=levels, cmap=style.cmap_continuous, extend="max")
+        mesh = ax.contourf(surface.x, surface.y, energy_plot, levels=levels, cmap=resolve_colormap(style.cmap_continuous, style), extend="max")
         contour_levels = levels[1:-1:2]
         if len(contour_levels):
             ax.contour(surface.x, surface.y, energy_plot, levels=contour_levels, colors="white", linewidths=max(0.75, style.thin_line_width), alpha=0.78)
@@ -414,6 +415,141 @@ def plot_fes(x, y, out_base, title, xlabel, ylabel, n_bins, temperature_K, kB_kc
             "basin_markers": basin_metadata,
             "warning": surface.sparse_sampling_warning,
         },
+    )
+
+
+def _truthy_csv_value(value) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def plot_fes_from_csv(csv_path, out_base, title, xlabel, ylabel, style: PlotStyleConfig) -> bool:
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        return False
+    rows = read_dict_csv(csv_path)
+    if not rows:
+        return False
+    try:
+        x_values = sorted({float(row[xlabel]) for row in rows})
+        y_values = sorted({float(row[ylabel]) for row in rows})
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not x_values or not y_values:
+        return False
+    x_index = {value: idx for idx, value in enumerate(x_values)}
+    y_index = {value: idx for idx, value in enumerate(y_values)}
+    probability = np.full((len(y_values), len(x_values)), np.nan, dtype=float)
+    energy = np.full_like(probability, np.nan)
+    basin_labels = {}
+    for row in rows:
+        try:
+            ix = x_index[float(row[xlabel])]
+            iy = y_index[float(row[ylabel])]
+            probability[iy, ix] = float(row["probability_density"])
+            energy[iy, ix] = float(row["relative_free_energy_kcal_mol"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        label = str(row.get("basin_label", "")).strip()
+        if label and _truthy_csv_value(row.get("is_local_minimum", "")):
+            basin_labels[(iy, ix)] = label
+    if not np.isfinite(energy).any():
+        return False
+    x_grid, y_grid = np.meshgrid(np.asarray(x_values, dtype=float), np.asarray(y_values, dtype=float))
+    plot_fes_grid(
+        x_grid,
+        y_grid,
+        probability,
+        energy,
+        out_base,
+        title,
+        xlabel,
+        ylabel,
+        style,
+        basin_labels=basin_labels or None,
+    )
+    return True
+
+
+def plot_fes_grid(
+    x_grid,
+    y_grid,
+    probability,
+    energy,
+    out_base,
+    title,
+    xlabel,
+    ylabel,
+    style: PlotStyleConfig,
+    basin_labels: dict[tuple[int, int], str] | None = None,
+):
+    surface = FESSurface(
+        x=np.asarray(x_grid, dtype=float),
+        y=np.asarray(y_grid, dtype=float),
+        probability=np.asarray(probability, dtype=float),
+        energy=np.asarray(energy, dtype=float),
+        estimator="existing_grid",
+        n_samples=0,
+        n_unique_samples=0,
+        density_floor_fraction=0.0,
+        sparse_sampling_warning=None,
+    )
+    display_cap = _energy_display_cap(surface.energy)
+    energy_plot = np.where(np.isfinite(surface.energy), np.minimum(surface.energy, display_cap), np.nan)
+    levels = np.linspace(0.0, display_cap, 13)
+    if basin_labels:
+        basin_indices = sorted(basin_labels, key=lambda ij: float(surface.energy[ij]) if np.isfinite(surface.energy[ij]) else np.inf)[:4]
+        labels = dict(basin_labels)
+    else:
+        basin_indices = _identify_low_energy_basins(surface.energy, max_basins=4)
+        labels = {(iy, ix): ("GM" if idx == 0 else f"B{idx}") for idx, (iy, ix) in enumerate(basin_indices)}
+    x_finite = surface.x[np.isfinite(surface.x)]
+    y_finite = surface.y[np.isfinite(surface.y)]
+    x_span = max(float(np.ptp(x_finite)), 1.0) if x_finite.size else 1.0
+    y_span = max(float(np.ptp(y_finite)), 1.0) if y_finite.size else 1.0
+    with publication_style(style):
+        fig, ax = plt.subplots(figsize=(6.4, 5.4))
+        mesh = ax.contourf(surface.x, surface.y, energy_plot, levels=levels, cmap=resolve_colormap(style.cmap_continuous, style), extend="max")
+        contour_levels = levels[1:-1:2]
+        if len(contour_levels):
+            ax.contour(surface.x, surface.y, energy_plot, levels=contour_levels, colors="white", linewidths=max(0.75, style.thin_line_width), alpha=0.78)
+        for idx, (iy, ix) in enumerate(basin_indices):
+            x0 = float(surface.x[iy, ix])
+            y0 = float(surface.y[iy, ix])
+            is_global_min = idx == 0
+            ax.scatter(
+                [x0],
+                [y0],
+                s=115 if is_global_min else 42,
+                marker="*" if is_global_min else "o",
+                facecolors="white",
+                edgecolors=style.mean_line_color,
+                linewidths=0.85,
+                zorder=4,
+            )
+            ax.text(
+                x0 + 0.03 * x_span,
+                y0 + 0.03 * y_span,
+                labels.get((iy, ix), "GM" if idx == 0 else f"B{idx}"),
+                fontsize=style.legend_size,
+                color=style.mean_line_color,
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.78, pad=0.2),
+                zorder=5,
+            )
+        finalize_axes(ax, style, xlabel=xlabel, ylabel=ylabel, title=title)
+        cbar = fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Relative free energy, ΔG (kcal/mol)")
+        save_figure(fig, out_base, style)
+    out_base_path = Path(out_base)
+    _plot_fes_3d(
+        surface,
+        out_base_path.with_name(f"{out_base_path.name}_3d"),
+        title,
+        xlabel,
+        ylabel,
+        display_cap,
+        basin_indices,
+        labels,
+        style,
     )
 
 
@@ -530,9 +666,10 @@ def plot_stationary_distribution(states, probs, out_base, style: PlotStyleConfig
 
     with publication_style(style):
         fig, ax = plt.subplots(figsize=(7.6, height))
+        row_fill = subtle_fill_color(style)
         for idx in range(len(ordered_probs)):
             if idx % 2 == 0:
-                ax.axhspan(idx - 0.5, idx + 0.5, color="#F8FAFC", zorder=0)
+                ax.axhspan(idx - 0.5, idx + 0.5, color=row_fill, zorder=0)
         ax.barh(y, ordered_probs, height=0.68, color=colors, alpha=0.18, edgecolor="none", zorder=1)
         ax.hlines(y, 0.0, ordered_probs, color=colors, linewidth=2.2, alpha=0.65, zorder=2)
         ax.scatter(ordered_probs, y, s=max(style.marker_size * 26.0, 52.0), color=colors, edgecolors="white", linewidths=1.0, zorder=3)
@@ -843,7 +980,7 @@ def plot_transition_matrix_heatmap(transition_matrix, out_base, style: PlotStyle
         ax_edges = fig.add_subplot(gs[0, 1])
         ax_residence = fig.add_subplot(gs[1, 1])
 
-        mesh = ax_matrix.imshow(T, cmap=style.cmap_continuous, vmin=0.0, vmax=1.0)
+        mesh = ax_matrix.imshow(T, cmap=resolve_colormap(style.cmap_continuous, style), vmin=0.0, vmax=1.0)
         for iy in range(T.shape[0]):
             for ix in range(T.shape[1]):
                 value = float(T[iy, ix])
