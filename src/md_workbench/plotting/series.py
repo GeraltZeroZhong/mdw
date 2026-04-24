@@ -136,6 +136,7 @@ def _replicate_handles(
     mean_color: str,
     band_color: str,
     confidence: float,
+    mean_label: str = "Mean",
 ) -> list:
     handles = [
         Line2D(
@@ -153,7 +154,7 @@ def _replicate_handles(
             [0],
             color=mean_color,
             linewidth=2.4,
-            label="Mean",
+            label=mean_label,
         )
     )
     handles.append(
@@ -189,7 +190,18 @@ def draw_publication_replicate_summary(
     line_colors = [palette[idx % len(palette)] for idx in range(n_replicas)]
     mean_line_color = mean_color or style.mean_line_color
     interval_color = band_color or _blend_color(style.band_color, "#FFFFFF", 0.35)
+    window = _rolling_window_size(time_arr.size, rolling_window_fraction)
 
+    if window > 1:
+        for color, row in zip(line_colors, arr2d):
+            ax.plot(
+                time_arr,
+                row,
+                linewidth=max(style.thin_line_width * 0.65, 0.55),
+                alpha=0.18,
+                color=color,
+                zorder=1,
+            )
     display_rows = np.vstack([smooth_series(row, rolling_window_fraction) for row in arr2d])
     mean_s, lower_s, upper_s = _mean_and_confidence_interval(display_rows, confidence=confidence)
 
@@ -200,7 +212,7 @@ def draw_publication_replicate_summary(
         alpha=0.18,
         linewidth=0.0,
         color=interval_color,
-        zorder=1,
+        zorder=1.5,
     )
     for color, label, row_s in zip(line_colors, replicate_labels, display_rows):
         line = ax.plot(
@@ -249,6 +261,7 @@ def draw_publication_replicate_summary(
             mean_line_color,
             interval_color,
             confidence,
+            mean_label="Mean (rolling)" if window > 1 else "Mean",
         ),
     }
 
@@ -475,14 +488,24 @@ def direct_label_line_series(
     figsize: tuple[float, float] = (7.2, 4.6),
 ):
     time_arr = np.asarray(time_ns, dtype=float)
+    window = _rolling_window_size(time_arr.size, rolling_window_fraction)
     smoothed = [smooth_series(y, rolling_window_fraction) for y in ys]
     palette = colors or style.categorical_palette
     with publication_style(style):
         fig, ax = plt.subplots(figsize=figsize)
         end_values = []
         x_end_values = []
-        for idx, (y, label) in enumerate(zip(smoothed, labels)):
+        for idx, (raw_y, y, label) in enumerate(zip(ys, smoothed, labels)):
             color = palette[idx % len(palette)]
+            if window > 1:
+                ax.plot(
+                    time_arr,
+                    raw_y,
+                    linewidth=max(style.thin_line_width * 0.65, 0.55),
+                    alpha=0.16,
+                    color=_blend_color(color, "#FFFFFF", 0.35),
+                    zorder=1,
+                )
             ax.plot(time_arr, y, linewidth=style.line_width, color=color, zorder=2)
             x_end, y_end = _last_finite_point(time_arr, y)
             x_end_values.append(x_end)

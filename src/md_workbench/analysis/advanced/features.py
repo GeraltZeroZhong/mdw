@@ -8,12 +8,12 @@ from ...core import atom_label, find_ligand_residue, residue_label
 
 
 def featurize_traj(traj, feature_pairs):
-    return md.compute_distances(traj, feature_pairs, periodic=True)
+    return md.compute_distances(traj, feature_pairs, periodic=False)
 
 
 def _min_ca_ligand_distance_by_atom(traj, protein_ca, ligand_heavy):
     pairs = [(int(i), int(j)) for i in protein_ca for j in ligand_heavy]
-    distances = md.compute_distances(traj, pairs, periodic=True)
+    distances = md.compute_distances(traj, pairs, periodic=False)
     min_by_ca = {int(i): np.inf for i in protein_ca}
     for pair_idx, (ca_idx, _lig_idx) in enumerate(pairs):
         min_by_ca[int(ca_idx)] = min(min_by_ca[int(ca_idx)], float(np.min(distances[:, pair_idx])))

@@ -256,7 +256,11 @@ def plot_combined_occupancy_bars(
     for key_name, value_name, out_field_name, csv_name, base_name, title, xlabel in specs:
         rows = aggregate_metric_rows(replica_results, key_name, value_name, out_field_name)
         combined_rows[out_field_name] = rows
-        write_dict_csv(combined_dir / csv_name, rows, ["protein_residue", f"{out_field_name}_mean", f"{out_field_name}_sd", "n_replicas"])
+        write_dict_csv(
+            combined_dir / csv_name,
+            rows,
+            ["protein_residue", f"{out_field_name}_mean", f"{out_field_name}_sd", "n_replicas", "n_present_replicas"],
+        )
         if rows and (plot_selection is None or plot_selection.enabled("basic_combined_occupancy_bars")):
             if out_field_name == "contact_occupancy":
                 distance_rows = [row for row in _build_contact_distance_summary(replica_results) if float(row["contact_occupancy_mean"]) > 0.0]

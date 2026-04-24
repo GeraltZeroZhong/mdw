@@ -15,6 +15,7 @@ from ...core import (
     write_dict_csv,
     save_csv,
 )
+from ..imaging import image_ligand_near_protein
 from ...plotting.basic_replica import (
     plot_replica_counts,
     plot_replica_dssp,
@@ -109,6 +110,7 @@ def process_replica(
     style: PlotStyleConfig,
     plot_selection: PlotSelectionConfig | None = None,
     progress_callback: ReplicaStepCallback | None = None,
+    reference=None,
 ):
     step_total = 10
     _emit_replica_step(progress_callback, 0, step_total, "Loading trajectory, topology, and MD log")
@@ -131,65 +133,81 @@ def process_replica(
     )
 
     try:
-        traj = md.load(str(traj_path), top=str(top_path))
+        topology_frame = md.load_pdb(str(top_path))
+    except OSError as exc:
+        raise ValueError(f"{Path(replica_dir).name}: 无法读取拓扑文件 {top_path}") from exc
+    topology_ligand = find_ligand_residue(topology_frame.topology)
+    solute_atom_indices = sorted(
+        set(map(int, topology_frame.topology.select("protein"))) | {int(atom.index) for atom in topology_ligand.atoms}
+    )
+    if not solute_atom_indices:
+        raise ValueError(f"{replica_dir}: missing protein or ligand atoms")
+    try:
+        raw_traj = md.load(str(traj_path), top=str(top_path), atom_indices=solute_atom_indices)
     except OSError as exc:
         raise ValueError(f"{Path(replica_dir).name}: 无法读取轨迹文件 {traj_path}") from exc
-    ligand_residue = find_ligand_residue(traj.topology)
+    ligand_residue = find_ligand_residue(raw_traj.topology)
     ligand_all = [atom.index for atom in ligand_residue.atoms]
     ligand_heavy = [atom.index for atom in ligand_residue.atoms if atom.element is not None and atom.element.symbol != "H"]
-    protein_bb = traj.topology.select("protein and backbone")
-    protein_ca = traj.topology.select("protein and name CA")
-    protein_all = traj.topology.select("protein")
+    protein_bb = raw_traj.topology.select("protein and backbone")
+    protein_ca = raw_traj.topology.select("protein and name CA")
+    protein_all = raw_traj.topology.select("protein")
     if len(protein_bb) == 0 or len(ligand_heavy) == 0:
         raise ValueError(f"{replica_dir}: missing protein backbone or ligand heavy atoms")
 
-    _emit_replica_step(progress_callback, 1, step_total, "Aligning trajectory and preparing analysis reference")
-    reference = build_average_reference(traj, protein_bb)
-    traj.superpose(reference, 0, atom_indices=protein_bb, ref_atom_indices=protein_bb)
+    _emit_replica_step(progress_callback, 1, step_total, "Imaging trajectory, aligning, and preparing analysis reference")
+    imaged_traj = image_ligand_near_protein(raw_traj, ligand_residue)
+    del raw_traj
+    if reference is None:
+        reference = build_average_reference(imaged_traj, protein_bb)
+    elif reference.n_atoms != imaged_traj.n_atoms:
+        raise ValueError(f"{replica_dir}: shared RMSD reference atom count does not match this trajectory.")
+    aligned_traj = imaged_traj[:]
+    aligned_traj.superpose(reference, 0, atom_indices=protein_bb, ref_atom_indices=protein_bb)
     reference.save_pdb(str(Path(out_dir) / "analysis_reference.pdb"))
-    time_ns = get_time_ns_from_nframes(traj.n_frames, cfg.timestep_ps, cfg.dcd_interval_steps)
+    time_ns = get_time_ns_from_nframes(aligned_traj.n_frames, cfg.timestep_ps, cfg.dcd_interval_steps)
 
     _emit_replica_step(progress_callback, 2, step_total, "Computing RMSD and RMSF")
-    protein_rmsd_A, ligand_rmsd_A, rmsf_rows = compute_rmsd_and_rmsf(traj, protein_bb, ligand_heavy, protein_ca, reference)
+    protein_rmsd_A, ligand_rmsd_A, rmsf_rows = compute_rmsd_and_rmsf(aligned_traj, protein_bb, ligand_heavy, protein_ca, reference)
     save_csv(out_dir / "rmsd_timeseries.csv", ["time_ns", "protein_backbone_rmsd_A", "ligand_heavy_rmsd_A"], np.column_stack([time_ns, protein_rmsd_A, ligand_rmsd_A]).tolist())
     if plot_selection is None or plot_selection.enabled("basic_replica_rmsd"):
         plot_replica_rmsd(time_ns, protein_rmsd_A, ligand_rmsd_A, out_dir, Path(replica_dir).name, style)
 
     _emit_replica_step(progress_callback, 3, step_total, "Computing contact occupancy and minimum distances")
-    protein_heavy_atoms_by_residue = group_protein_heavy_atoms_by_residue(traj)
-    contact_rows, residue_min_distance_curves, contact_bool, global_min_distance_A = compute_contact_occupancy(traj, ligand_heavy, protein_heavy_atoms_by_residue, cfg.contact_cutoff_nm)
+    protein_heavy_atoms_by_residue = group_protein_heavy_atoms_by_residue(imaged_traj)
+    contact_rows, residue_min_distance_curves, contact_bool, global_min_distance_A = compute_contact_occupancy(imaged_traj, ligand_heavy, protein_heavy_atoms_by_residue, cfg.contact_cutoff_nm)
     write_dict_csv(out_dir / "contact_occupancy.csv", contact_rows, ["protein_residue", "contact_occupancy", "min_distance_mean_A", "min_distance_min_A"])
     save_csv(out_dir / "min_distance_timeseries.csv", ["time_ns", "ligand_protein_min_heavy_distance_A"], np.column_stack([time_ns, global_min_distance_A]).tolist())
     if plot_selection is None or plot_selection.enabled("basic_replica_min_distance"):
         plot_replica_min_distance(time_ns, global_min_distance_A, out_dir, Path(replica_dir).name, style)
-    contact_count = compute_counts_from_boolean_dict(contact_bool, traj.n_frames)
+    contact_count = compute_counts_from_boolean_dict(contact_bool, imaged_traj.n_frames)
 
     _emit_replica_step(progress_callback, 4, step_total, "Computing hydrogen-bond occupancy")
-    hbond_triplets, hbond_residues, hbond_residue_present, hbond_triplet_present = compute_hbond_occupancy(traj, set(ligand_all), cfg.hbond_distance_nm, cfg.hbond_angle_deg)
+    hbond_triplets, hbond_residues, hbond_residue_present, hbond_triplet_present = compute_hbond_occupancy(imaged_traj, set(ligand_all), cfg.hbond_distance_nm, cfg.hbond_angle_deg)
     write_dict_csv(out_dir / "hbond_triplets.csv", hbond_triplets, ["direction", "donor_atom", "hydrogen_atom", "acceptor_atom", "protein_residue", "occupancy", "mean_HA_distance_A", "min_HA_distance_A", "mean_DA_distance_A", "min_DA_distance_A"])
     write_dict_csv(out_dir / "hbond_residue_occupancy.csv", hbond_residues, ["protein_residue", "hbond_occupancy"])
-    hbond_count = compute_counts_from_boolean_dict(hbond_triplet_present, traj.n_frames)
+    hbond_count = compute_counts_from_boolean_dict(hbond_triplet_present, imaged_traj.n_frames)
 
     _emit_replica_step(progress_callback, 5, step_total, "Computing salt bridges")
-    salt_pair_rows, salt_residue_rows, salt_residue_present, salt_pair_present = compute_salt_bridges(traj, ligand_residue, ligand_sdf_path, cfg.salt_bridge_cutoff_nm)
+    salt_pair_rows, salt_residue_rows, salt_residue_present, salt_pair_present = compute_salt_bridges(imaged_traj, ligand_residue, ligand_sdf_path, cfg.salt_bridge_cutoff_nm)
     write_dict_csv(out_dir / "salt_bridge_atom_pairs.csv", salt_pair_rows, ["type", "protein_residue", "protein_atom", "ligand_atom", "occupancy", "mean_distance_A", "min_distance_A"])
     write_dict_csv(out_dir / "salt_bridge_residue_occupancy.csv", salt_residue_rows, ["protein_residue", "salt_bridge_occupancy"])
-    salt_bridge_count = compute_counts_from_boolean_dict(salt_pair_present, traj.n_frames)
+    salt_bridge_count = compute_counts_from_boolean_dict(salt_pair_present, imaged_traj.n_frames)
 
     _emit_replica_step(progress_callback, 6, step_total, "Computing shape, SASA, and DSSP metrics")
     write_dict_csv(out_dir / "rmsf_ca.csv", rmsf_rows, ["protein_residue", "resSeq", "resname", "rmsf_A"])
     if plot_selection is None or plot_selection.enabled("basic_replica_rmsf"):
         plot_replica_rmsf(rmsf_rows, out_dir, Path(replica_dir).name, style)
 
-    rg_A = compute_rg(traj, protein_all)
-    complex_sasa_A2, protein_sasa_A2, ligand_sasa_A2, buried_surface_A2 = compute_sasa_metrics(traj, protein_all, ligand_all, cfg.sasa_probe_radius_nm)
-    dssp_raw, dssp_residue_labels, dssp_fractions, dssp_occupancy = compute_dssp_metrics(traj)
+    rg_A = compute_rg(imaged_traj, protein_all)
+    complex_sasa_A2, protein_sasa_A2, ligand_sasa_A2, buried_surface_A2 = compute_sasa_metrics(imaged_traj, protein_all, ligand_all, cfg.sasa_probe_radius_nm)
+    dssp_raw, dssp_residue_labels, dssp_fractions, dssp_occupancy = compute_dssp_metrics(aligned_traj)
     save_csv(out_dir / "dssp_fractions_timeseries.csv", ["time_ns", "helix_fraction", "sheet_fraction", "coil_fraction"], np.column_stack([time_ns, dssp_fractions["Helix"], dssp_fractions["Sheet"], dssp_fractions["Coil"]]).tolist())
     write_dict_csv(out_dir / "dssp_residue_occupancy.csv", [{"protein_residue": lab, "helix_fraction": float(row[0]), "sheet_fraction": float(row[1]), "coil_fraction": float(row[2])} for lab, row in zip(dssp_residue_labels, dssp_occupancy)], ["protein_residue", "helix_fraction", "sheet_fraction", "coil_fraction"])
 
-    com_distance_A, orientation_angle_deg = compute_ligand_pose_metrics(traj, ligand_heavy, protein_heavy_atoms_by_residue, reference, cfg.pose_cutoff_nm)
+    com_distance_A, orientation_angle_deg = compute_ligand_pose_metrics(aligned_traj, ligand_heavy, protein_heavy_atoms_by_residue, reference, cfg.pose_cutoff_nm)
     torsion_quads = detect_ligand_rotatable_dihedrals(ligand_sdf_path, ligand_all)
-    torsion_map = compute_ligand_torsions(traj, torsion_quads)
+    torsion_map = compute_ligand_torsions(imaged_traj, torsion_quads)
     torsion_csv_header = ["time_ns"] + list(torsion_map.keys())
     if torsion_map:
         save_csv(out_dir / "ligand_torsions.csv", torsion_csv_header, np.column_stack([time_ns] + [torsion_map[k] for k in torsion_map]).tolist())
@@ -219,7 +237,7 @@ def process_replica(
         plot_replica_dssp(time_ns, dssp_fractions, dssp_residue_labels, dssp_occupancy, out_dir, Path(replica_dir).name, style)
 
     if plot_selection is None or plot_selection.enabled("basic_replica_snapshots"):
-        snapshot_entries = _export_representative_snapshots(traj, protein_ca, ligand_heavy, Path(out_dir), Path(replica_dir).name, cfg.snapshot_n_frames)
+        snapshot_entries = _export_representative_snapshots(aligned_traj, protein_ca, ligand_heavy, Path(out_dir), Path(replica_dir).name, cfg.snapshot_n_frames)
         plot_replica_snapshots(snapshot_entries, out_dir, Path(replica_dir).name, style)
 
     _emit_replica_step(progress_callback, 8, step_total, "Computing convergence blocks and thermodynamic summaries")
@@ -245,7 +263,7 @@ def process_replica(
     _emit_replica_step(progress_callback, 9, step_total, "Assembling replica summary")
     summary = {
         "replica": Path(replica_dir).name,
-        "n_frames": int(traj.n_frames),
+        "n_frames": int(aligned_traj.n_frames),
         "simulation_time_ns": float(time_ns[-1] if len(time_ns) > 0 else 0.0),
         "ligand_residue": f"chain{ligand_residue.chain.index}_{ligand_residue.name}{ligand_residue.resSeq}",
         "protein_backbone_rmsd_mean_A": float(np.mean(protein_rmsd_A)),
@@ -302,4 +320,5 @@ def process_replica(
         "convergence_blocks": block_rows,
         "log_rows": log_rows,
         "summary": summary,
+        "analysis_reference": reference,
     }
