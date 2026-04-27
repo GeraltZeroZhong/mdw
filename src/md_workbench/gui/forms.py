@@ -103,6 +103,7 @@ BASIC_FIELD_GROUPS = {
         "search_center_x", "search_center_y", "search_center_z",
     },
     "run": {
+        "n_replicas",
         "production_steps",
     },
     "basic": set(),
@@ -118,6 +119,7 @@ BASIC_REQUIRED_FIELDS = {
     "search_center_x",
     "search_center_y",
     "search_center_z",
+    "n_replicas",
     "production_steps",
     "formats",
 }

@@ -8,15 +8,17 @@ from .gui import main as gui_main
 from .self_check import run_self_check
 from .workflows import (
     prepare_existing_results_workflow_config,
+    prepare_next_replica_workflow_config,
     run_existing_results_workflow,
     run_full_md_workflow,
+    run_next_replica_workflow,
     run_plot_workflow,
 )
 
 
 def main():
     parser = argparse.ArgumentParser(description="MD Workbench CLI")
-    parser.add_argument("mode", choices=["run", "existing-results", "plot", "gui", "self-check"])
+    parser.add_argument("mode", choices=["run", "next-replica", "existing-results", "plot", "gui", "self-check"])
     parser.add_argument("config_positional", nargs="?", default=None)
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
@@ -27,9 +29,15 @@ def main():
 
     config_path = args.config or args.config_positional or "default_config.json"
     cfg = load_workflow_config(config_path)
-    effective_cfg = prepare_existing_results_workflow_config(cfg) if args.mode == "existing-results" else cfg
+    if args.mode == "existing-results":
+        effective_cfg = prepare_existing_results_workflow_config(cfg)
+    elif args.mode == "next-replica":
+        effective_cfg = prepare_next_replica_workflow_config(cfg)
+    else:
+        effective_cfg = cfg
     run_type = {
         "run": "full_workflow",
+        "next-replica": "next_replica_workflow",
         "existing-results": "existing_results_workflow",
         "plot": "plot_workflow",
         "self-check": "self_check",
@@ -40,6 +48,8 @@ def main():
     try:
         if args.mode == "run":
             outputs = run_full_md_workflow(effective_cfg)
+        elif args.mode == "next-replica":
+            outputs = run_next_replica_workflow(effective_cfg)
         elif args.mode == "existing-results":
             outputs = run_existing_results_workflow(effective_cfg)
         elif args.mode == "plot":
