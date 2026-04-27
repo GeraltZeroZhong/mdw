@@ -5,7 +5,14 @@ from copy import deepcopy
 from pathlib import Path
 
 from ..config import WorkflowConfig
-from ..core import ensure_project_layout, infer_run_input_paths, normalize_workflow_paths, organize_outputs, preflight_validate
+from ..core import (
+    ensure_project_layout,
+    infer_run_input_paths,
+    normalize_workflow_paths,
+    organize_outputs,
+    preflight_validate,
+    summarize_replica_status,
+)
 from ..core.progress import ProgressCallback, ProgressEvent, emit_progress
 from .plot import (
     reusable_advanced_csv_available,
@@ -84,6 +91,122 @@ def _progress_total_units(cfg: WorkflowConfig) -> int:
         total += 1
     total += 1
     return max(total, 1)
+
+
+def prepare_next_replica_workflow_config(cfg: WorkflowConfig) -> WorkflowConfig:
+    cfg = normalize_workflow_paths(deepcopy(cfg))
+    cfg.do_run_md = True
+    if cfg.do_prep:
+        protein_pdb, ligand_sdf = infer_run_input_paths(cfg)
+        prepared_inputs_exist = (
+            str(protein_pdb).strip()
+            and str(ligand_sdf).strip()
+            and Path(protein_pdb).is_file()
+            and Path(ligand_sdf).is_file()
+        )
+        if prepared_inputs_exist:
+            cfg.do_prep = False
+            cfg.run.protein_pdb = protein_pdb
+            cfg.run.ligand_sdf = ligand_sdf
+    return cfg
+
+
+def _next_replica_total_units(cfg: WorkflowConfig) -> int:
+    return max(1 + int(bool(cfg.do_prep)), 1)
+
+
+def run_next_replica_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallback | None = None):
+    cfg = prepare_next_replica_workflow_config(cfg)
+    total_units = _next_replica_total_units(cfg)
+    completed_units = 0
+    emit_progress(progress_callback, completed_units, total_units, "initialize", "Preparing next-replica workflow inputs")
+    ensure_project_layout(cfg.workspace_root)
+    validation = preflight_validate(cfg)
+    if validation.errors:
+        bullets = "\n".join(f"- {item}" for item in validation.errors)
+        raise ValueError(f"Next-replica workflow preflight validation failed:\n{bullets}")
+
+    before_status = summarize_replica_status(cfg.run.output_root, cfg.run.n_replicas)
+    next_replica_id = before_status["next_replica_id"]
+    outputs = {
+        "status": "pending" if next_replica_id is not None else "all_replicas_completed",
+        "replica_status_before": before_status,
+        "target_n_replicas": before_status["target_n_replicas"],
+        "next_replica_id": next_replica_id,
+    }
+    if next_replica_id is None:
+        emit_progress(
+            progress_callback,
+            total_units,
+            total_units,
+            "md",
+            f"All {before_status['target_n_replicas']} target MD replicas are already complete",
+        )
+        outputs["replica_status_after"] = before_status
+        return outputs
+
+    if cfg.do_prep:
+        emit_progress(progress_callback, completed_units, total_units, "prep", "Preparing receptor and ligand inputs")
+        from ..prep import run_prep_workflow
+
+        outputs["prep"] = run_prep_workflow(cfg.prep, cfg.docking)
+        completed_units += 1
+        emit_progress(progress_callback, completed_units, total_units, "prep", "Prepared receptor and ligand inputs")
+
+    _resolve_md_inputs(cfg)
+    _bind_analysis_inputs_to_md_outputs(cfg)
+    _bind_existing_analysis_inputs(cfg)
+
+    emit_progress(
+        progress_callback,
+        completed_units,
+        total_units,
+        "md",
+        f"Running next MD replica {next_replica_id}/{cfg.run.n_replicas}",
+    )
+    from ..simulate import run_single_replica_workflow
+
+    md_offset = completed_units
+
+    def _md_progress(event: ProgressEvent) -> None:
+        emit_progress(
+            progress_callback,
+            md_offset + min(max(int(event.current), 0), 1),
+            total_units,
+            "md",
+            event.detail,
+            subcurrent=event.subcurrent,
+            subtotal=event.subtotal,
+            subdetail=event.subdetail or event.detail,
+            subeta_seconds=event.subeta_seconds,
+        )
+
+    outputs["md"] = run_single_replica_workflow(cfg.run, int(next_replica_id), progress_callback=_md_progress)
+    completed_units += 1
+    after_status = summarize_replica_status(cfg.run.output_root, cfg.run.n_replicas)
+    outputs["replica_status_after"] = after_status
+    outputs["completed_replicas"] = after_status["completed_replicas"]
+    outputs["remaining_replicas"] = after_status["remaining_replicas"]
+    outputs["all_replicas_completed"] = after_status["all_replicas_completed"]
+    ran_replica_status = next(
+        (item for item in after_status["replicas"] if item["replica_id"] == int(next_replica_id)),
+        {},
+    )
+    outputs["ran_replica_completed"] = bool(ran_replica_status.get("completed"))
+    outputs["status"] = "completed" if outputs["ran_replica_completed"] else "incomplete_outputs"
+    detail = (
+        f"Completed MD replica {next_replica_id}/{cfg.run.n_replicas}"
+        if outputs["ran_replica_completed"]
+        else f"Finished MD replica {next_replica_id}/{cfg.run.n_replicas}, but required outputs are incomplete"
+    )
+    emit_progress(
+        progress_callback,
+        completed_units,
+        total_units,
+        "md",
+        detail,
+    )
+    return outputs
 
 
 def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallback | None = None):

@@ -15,7 +15,7 @@ from openmm.app import DCDReporter, HBonds, PME, NoCutoff, PDBFile, Simulation, 
 from openmm.unit import bar, kelvin, molar, nanometer, nanometers, picosecond, picoseconds
 
 from ..config import RunConfig
-from ..core import ensure_dir
+from ..core import clear_replica_generated_outputs, ensure_dir, replica_dir, write_replica_status
 from ..core.progress import ProgressCallback, emit_progress
 from .system_builder import build_modeller_and_forcefield
 
@@ -316,7 +316,8 @@ def run_single_replica(
     progress_callback: ReplicaStepCallback | None = None,
 ):
     seed = cfg.base_seed + replica_id
-    out_dir = ensure_dir(Path(cfg.output_root) / f"replica_{replica_id}")
+    out_dir = ensure_dir(replica_dir(cfg.output_root, replica_id))
+    clear_replica_generated_outputs(out_dir)
     total_steps = max(int(cfg.equil_steps), 0) + max(int(cfg.production_steps), 0)
     if progress_callback is not None:
         progress_callback(0, max(total_steps, 1), "Preparing solvated system and force field", None)
@@ -439,6 +440,16 @@ def run_single_replica(
     }
     if amber_artifact_warning:
         result["amber_artifact_warning"] = amber_artifact_warning
+    status_path = write_replica_status(
+        out_dir,
+        replica_id,
+        {
+            "amber_artifacts": amber_artifacts if amber_artifacts else {},
+            "amber_artifact_warning": amber_artifact_warning,
+            "platform": platform_info,
+        },
+    )
+    result["replica_status"] = str(status_path.resolve())
     return result
 
 
@@ -517,3 +528,61 @@ def run_md_workflow(cfg: RunConfig, progress_callback: ReplicaProgressCallback |
             subdetail="Replica completed",
         )
     return outputs
+
+
+def run_single_replica_workflow(
+    cfg: RunConfig,
+    replica_id: int,
+    progress_callback: ReplicaProgressCallback | None = None,
+) -> dict[str, object]:
+    total_replicas = max(int(cfg.n_replicas), 1)
+    replica_id = int(replica_id)
+    if replica_id < 1 or replica_id > total_replicas:
+        raise ValueError(f"Replica id {replica_id} is outside the configured target range 1..{total_replicas}.")
+
+    _emit_replica_progress(progress_callback, 0, 1, "Building the solvated MD system")
+    modeller, forcefield = build_modeller_and_forcefield(cfg.protein_pdb, cfg.ligand_sdf)
+    _emit_replica_progress(progress_callback, 0, 1, "Initializing the OpenMM CUDA platform")
+    platform, properties = get_cuda_platform(cfg.use_mixed_precision)
+    replica_total_steps = max(int(cfg.equil_steps), 0) + max(int(cfg.production_steps), 0)
+    _emit_replica_progress(
+        progress_callback,
+        0,
+        1,
+        f"Running MD replica {replica_id}/{total_replicas}",
+        subcurrent=0,
+        subtotal=max(replica_total_steps, 1),
+        subdetail="Preparing replica inputs",
+    )
+
+    def _step_progress(current_step: int, total_steps: int, step_detail: str, eta_seconds: int | None) -> None:
+        _emit_replica_progress(
+            progress_callback,
+            0,
+            1,
+            f"Running MD replica {replica_id}/{total_replicas}",
+            subcurrent=current_step,
+            subtotal=total_steps,
+            subdetail=step_detail,
+            subeta_seconds=eta_seconds,
+        )
+
+    replica_output = run_single_replica(
+        replica_id,
+        cfg,
+        modeller,
+        forcefield,
+        platform,
+        properties,
+        progress_callback=_step_progress,
+    )
+    _emit_replica_progress(
+        progress_callback,
+        1,
+        1,
+        f"Completed MD replica {replica_id}/{total_replicas}",
+        subcurrent=max(replica_total_steps, 1),
+        subtotal=max(replica_total_steps, 1),
+        subdetail="Replica completed",
+    )
+    return replica_output
