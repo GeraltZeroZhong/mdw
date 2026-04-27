@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from ..config import WorkflowConfig
+from ..config.plot_style_defaults import apply_plot_style_palette
 from ..core import (
     ensure_project_layout,
     infer_run_input_paths,
@@ -211,6 +212,7 @@ def run_next_replica_workflow(cfg: WorkflowConfig, progress_callback: ProgressCa
 
 def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallback | None = None):
     cfg = normalize_workflow_paths(deepcopy(cfg))
+    apply_plot_style_palette(cfg.plot_style)
     total_units = _progress_total_units(cfg)
     completed_units = 0
     emit_progress(progress_callback, completed_units, total_units, "initialize", "Preparing workflow inputs")

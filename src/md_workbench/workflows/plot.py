@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from ..config import WorkflowConfig
+from ..config.plot_style_defaults import apply_plot_style_palette
 from ..core import ensure_project_layout, find_ligand_residue, normalize_workflow_paths, organize_outputs, read_dict_csv
 from ..core.progress import ProgressCallback, emit_progress
 from ..plotting.bars import ranked_distance_lollipop, ranked_lollipop
@@ -1186,6 +1187,7 @@ def run_plot_postprocess(
     include_mmgbsa_postprocess: bool = True,
     include_organize_outputs: bool = True,
 ):
+    apply_plot_style_palette(cfg.plot_style)
     total_units = _plot_progress_total_units(
         cfg,
         include_mmgbsa_postprocess=include_mmgbsa_postprocess,
@@ -1268,5 +1270,6 @@ def run_plot_postprocess(
 
 def run_plot_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallback | None = None):
     cfg = normalize_workflow_paths(deepcopy(cfg))
+    apply_plot_style_palette(cfg.plot_style)
     ensure_project_layout(cfg.workspace_root)
     return run_plot_postprocess(cfg, progress_callback=progress_callback)

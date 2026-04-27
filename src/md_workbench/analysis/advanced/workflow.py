@@ -6,6 +6,7 @@ import mdtraj as md
 import numpy as np
 
 from ...config import AdvancedAnalysisConfig, PlotSelectionConfig, PlotStyleConfig
+from ...config.plot_style_defaults import apply_plot_style_palette
 from ...core import check_input_file, ensure_dir, find_ligand_residue, require_nonempty_file, resolve_replica_dirs, save_csv, write_json
 from ...core.progress import ProgressCallback, emit_progress
 from ...plotting.advanced import (
@@ -264,6 +265,7 @@ def run_advanced_analysis(
     plot_selection: PlotSelectionConfig | None = None,
     progress_callback: ProgressCallback | None = None,
 ):
+    apply_plot_style_palette(style)
     step_total = 8
     emit_progress(progress_callback, 0, step_total, "advanced_analysis", "Resolving replica trajectories")
     replica_dirs = resolve_replica_dirs(cfg.replica_root, cfg.replica_glob)

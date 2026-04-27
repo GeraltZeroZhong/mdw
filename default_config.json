@@ -180,6 +180,7 @@
       "png",
       "svg"
     ],
+    "color_palette": "palette1",
     "dpi": 600,
     "font_family": "DejaVu Sans",
     "title_size": 10.6,

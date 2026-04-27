@@ -17,6 +17,7 @@ from .models import (
     WaterBridgeConfig,
     WorkflowConfig,
 )
+from .plot_style_defaults import apply_plot_style_palette, infer_plot_style_palette
 
 T = TypeVar("T")
 
@@ -109,7 +110,14 @@ def workflow_from_dict(data: dict[str, Any]) -> WorkflowConfig:
     if "plot_selection" in data:
         cfg.plot_selection = _coerce_dataclass(PlotSelectionConfig, data["plot_selection"])
     if "plot_style" in data:
-        cfg.plot_style = _coerce_dataclass(PlotStyleConfig, data["plot_style"])
+        plot_style_data = dict(data["plot_style"]) if isinstance(data["plot_style"], dict) else {}
+        if "palette" in plot_style_data and "color_palette" not in plot_style_data:
+            plot_style_data["color_palette"] = plot_style_data["palette"]
+        cfg.plot_style = _coerce_dataclass(PlotStyleConfig, plot_style_data)
+        if "color_palette" in plot_style_data:
+            apply_plot_style_palette(cfg.plot_style)
+        else:
+            cfg.plot_style.color_palette = infer_plot_style_palette(cfg.plot_style)
     if "output_bundle" in data:
         cfg.output_bundle = _coerce_dataclass(OutputBundleConfig, data["output_bundle"])
     if "workspace_root" in data:
