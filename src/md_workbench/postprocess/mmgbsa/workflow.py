@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ...config import MMGBSAConfig, PlotSelectionConfig, PlotStyleConfig
+from ...config.plot_style_defaults import apply_plot_style_palette
 from ...core import ensure_dir, find_binary, write_dict_csv, write_json
 from ...plotting.mmgbsa import (
     plot_mmgbsa_delta_total_distribution,
@@ -530,6 +531,7 @@ def run_mmgbsa_postprocess(
     style: PlotStyleConfig,
     plot_selection: PlotSelectionConfig | None = None,
 ):
+    apply_plot_style_palette(style)
     analysis_root = ensure_dir(cfg.analysis_root)
     results = []
     reused = _load_existing_replica_results(analysis_root, cfg) if cfg.reuse_existing_outputs else []

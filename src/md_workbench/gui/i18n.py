@@ -188,6 +188,7 @@ FIELD_LABELS = {
     "kB_kcal_mol_K": "Boltzmann constant (kcal/mol/K)",
     "max_saved_components": "Max saved components per replica",
     "formats": "Image output formats",
+    "color_palette": "Color palette",
     "dpi": "Resolution (dpi)",
     "font_family": "Font family",
     "title_size": "Title size",

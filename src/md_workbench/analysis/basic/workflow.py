@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...config import BasicAnalysisConfig, PlotSelectionConfig, PlotStyleConfig
+from ...config.plot_style_defaults import apply_plot_style_palette
 from ...core import ensure_dir, resolve_replica_dirs
 from ...core.progress import ProgressCallback, emit_progress
 from .combine import combine_basic_results
@@ -15,6 +16,7 @@ def run_basic_analysis(
     plot_selection: PlotSelectionConfig | None = None,
     progress_callback: ProgressCallback | None = None,
 ):
+    apply_plot_style_palette(style)
     replica_dirs = resolve_replica_dirs(cfg.replica_root, cfg.replica_glob)
     if not replica_dirs:
         raise FileNotFoundError(f"没有找到任何重复目录: {cfg.replica_glob}")

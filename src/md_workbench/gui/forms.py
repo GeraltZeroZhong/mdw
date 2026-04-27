@@ -10,6 +10,12 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, ttk
 from typing import Callable, get_type_hints
 
+from ..config.plot_style_defaults import (
+    CUSTOM_PLOT_STYLE_PRESET,
+    PLOT_STYLE_PRESET_CHOICES,
+    apply_plot_style_palette,
+    plot_style_palette_settings,
+)
 from .i18n import field_label, safe_text, section_hint, section_label, tr
 
 
@@ -90,6 +96,7 @@ ENUM_FIELDS = {
     "ligand_input_mode": ["smiles", "sdf"],
     "docking_mode": ["auto", "external", "skip"],
     "search_space_mode": ["auto", "manual"],
+    "color_palette": list(PLOT_STYLE_PRESET_CHOICES),
 }
 
 PATH_SUFFIXES = (".pdb", ".sdf", ".dcd", ".csv", ".json", ".txt", ".svg", ".png", ".dat", ".nc", ".prmtop")
@@ -110,7 +117,7 @@ BASIC_FIELD_GROUPS = {
     "waterbridge": set(),
     "advanced": set(),
     "plot_selection": set(),
-    "plot_style": {"formats"},
+    "plot_style": {"formats", "color_palette"},
     "output_bundle": set(),
     "mmgbsa": set(),
 }
@@ -122,6 +129,7 @@ BASIC_REQUIRED_FIELDS = {
     "n_replicas",
     "production_steps",
     "formats",
+    "color_palette",
 }
 
 ADVANCED_FIELD_GROUPS = {
@@ -380,6 +388,7 @@ ADVANCED_FIELD_GROUPS = {
             "title": "Color Mapping",
             "hint": "Set the default colors used by structural, thermodynamic, and categorical plot elements.",
             "fields": [
+                "color_palette",
                 "protein_color",
                 "ligand_color",
                 "distance_color",
@@ -698,7 +707,41 @@ class DataclassFrame(ttk.LabelFrame):
         color = colorchooser.askcolor(color=var.get() or "#000000")
         if color and color[1]:
             var.set(color[1])
+            if self.section_key == "plot_style" and "color_palette" in self.vars:
+                palette_var, _declared_type, _original_value = self.vars["color_palette"]
+                palette_var.set(CUSTOM_PLOT_STYLE_PRESET)
             self._log_field_value(field_name, color[1], action="Selected color for")
+
+    def _apply_selected_color_palette_to_vars(self, palette_name: str) -> None:
+        if self.section_key != "plot_style":
+            return
+        preset = plot_style_palette_settings(palette_name)
+        if preset is None:
+            return
+        updates = dict(preset["colors"])
+        updates["cmap_continuous"] = preset["cmap_continuous"]
+        updates["categorical_palette"] = ", ".join(preset["categorical_palette"])
+        for field_name, value in updates.items():
+            if field_name in self.vars:
+                var, _declared_type, _original_value = self.vars[field_name]
+                var.set(value)
+
+    def _handle_enum_selected(self, field_name: str, var: tk.StringVar) -> None:
+        self._log_field_value(field_name, var.get(), action="Selected")
+        if field_name == "color_palette":
+            self._apply_selected_color_palette_to_vars(str(var.get()))
+
+    def _vars_match_color_palette(self, preset: dict) -> bool:
+        for field_name, value in preset["colors"].items():
+            if field_name in self.vars and str(self.vars[field_name][0].get()).strip() != value:
+                return False
+        if "cmap_continuous" in self.vars and str(self.vars["cmap_continuous"][0].get()).strip() != preset["cmap_continuous"]:
+            return False
+        if "categorical_palette" in self.vars:
+            value = [item.strip() for item in str(self.vars["categorical_palette"][0].get()).split(",") if item.strip()]
+            if value != list(preset["categorical_palette"]):
+                return False
+        return True
 
     def _make_editor(self, editor_frame, field_name: str, value):
         if isinstance(value, bool):
@@ -715,7 +758,7 @@ class DataclassFrame(ttk.LabelFrame):
         var = tk.StringVar(value=shown)
         if field_name in ENUM_FIELDS:
             widget = ttk.Combobox(editor_frame, textvariable=var, values=ENUM_FIELDS[field_name], state="readonly")
-            widget.bind("<<ComboboxSelected>>", lambda _event, fn=field_name, v=var: self._log_field_value(fn, v.get(), action="Selected"))
+            widget.bind("<<ComboboxSelected>>", lambda _event, fn=field_name, v=var: self._handle_enum_selected(fn, v))
         else:
             widget = ttk.Entry(editor_frame, textvariable=var, width=58)
             widget.bind("<FocusOut>", lambda _event, fn=field_name, v=var: self._log_field_value(fn, v.get(), action="Updated"))
@@ -1080,3 +1123,14 @@ class DataclassFrame(ttk.LabelFrame):
                 label = field_label(name, self.lang)
                 raise ValueError(f"Invalid value for '{label}': {exc}") from exc
             setattr(self.obj, name, value)
+        if self.section_key == "plot_style":
+            preset = plot_style_palette_settings(getattr(self.obj, "color_palette", ""))
+            if preset is not None:
+                has_visible_palette_fields = any(
+                    name in self.vars
+                    for name in [*preset["colors"].keys(), "cmap_continuous", "categorical_palette"]
+                )
+                if not has_visible_palette_fields or self._vars_match_color_palette(preset):
+                    apply_plot_style_palette(self.obj)
+                else:
+                    self.obj.color_palette = CUSTOM_PLOT_STYLE_PRESET

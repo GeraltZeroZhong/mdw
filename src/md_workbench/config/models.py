@@ -5,6 +5,7 @@ from typing import Any
 
 from .plot_style_defaults import (
     DEFAULT_PLOT_RENDERING,
+    DEFAULT_PLOT_STYLE_PRESET,
     SCIENTIFIC_TEAL_PINK_COLORS,
     SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
     default_categorical_palette,
@@ -219,6 +220,7 @@ class PlotSelectionConfig:
 @dataclass
 class PlotStyleConfig:
     formats: list[str] = field(default_factory=default_plot_formats)
+    color_palette: str = DEFAULT_PLOT_STYLE_PRESET
     dpi: int = DEFAULT_PLOT_RENDERING["dpi"]
     font_family: str = DEFAULT_PLOT_RENDERING["font_family"]
     title_size: float = DEFAULT_PLOT_RENDERING["title_size"]
