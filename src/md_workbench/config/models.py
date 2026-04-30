@@ -147,7 +147,7 @@ class AdvancedAnalysisConfig:
 class MMGBSAConfig:
     analysis_root: str = "work/analysis/mmgbsa"
     source_root: str = "work/md"
-    auto_run: bool = True
+    auto_run: bool = False
     reuse_existing_outputs: bool = True
     non_blocking: bool = True
     use_mpi: bool = False
@@ -280,7 +280,7 @@ class WorkflowConfig:
     do_basic_analysis: bool = True
     do_waterbridge_analysis: bool = True
     do_advanced_analysis: bool = True
-    do_mmgbsa_postprocess: bool = True
+    do_mmgbsa_postprocess: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

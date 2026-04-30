@@ -117,7 +117,7 @@
   "mmgbsa": {
     "analysis_root": "work/analysis/mmgbsa",
     "source_root": "work/md",
-    "auto_run": true,
+    "auto_run": false,
     "reuse_existing_outputs": true,
     "non_blocking": true,
     "use_mpi": false,
@@ -199,27 +199,27 @@
     "grid_color": "#DCEDEE",
     "mean_line_color": "#2F6F70",
     "band_color": "#CFEAF1",
-    "protein_color": "#96CCCB",
-    "ligand_color": "#F6CAE5",
-    "distance_color": "#C4A5DE",
-    "temperature_color": "#96CCCB",
-    "density_color": "#B883D4",
-    "potential_energy_color": "#B883D4",
-    "total_energy_color": "#96CCCB",
-    "bar_color": "#96CCCB",
-    "accent_color": "#F6CAE5",
+    "protein_color": "#4FA7A6",
+    "ligand_color": "#D95CA6",
+    "distance_color": "#8F63C6",
+    "temperature_color": "#4FA7A6",
+    "density_color": "#7E6BC4",
+    "potential_energy_color": "#7E6BC4",
+    "total_energy_color": "#4FA7A6",
+    "bar_color": "#4FA7A6",
+    "accent_color": "#D95CA6",
     "cmap_continuous": "mdw_teal_purple",
     "categorical_palette": [
-      "#96CCCB",
-      "#F6CAE5",
-      "#C4A5DE",
-      "#B883D4",
-      "#CFEAF1",
-      "#6FAEAD",
-      "#E8A8D1",
-      "#A7DCE5",
-      "#A985CF",
-      "#7A8FBE"
+      "#2F6F70",
+      "#D95CA6",
+      "#8F63C6",
+      "#4FA7A6",
+      "#C05AAE",
+      "#5F8FD3",
+      "#7E6BC4",
+      "#B24D6E",
+      "#1B8A8F",
+      "#6A4C93"
     ]
   },
   "output_bundle": {
@@ -234,5 +234,5 @@
   "do_basic_analysis": true,
   "do_waterbridge_analysis": true,
   "do_advanced_analysis": true,
-  "do_mmgbsa_postprocess": true
+  "do_mmgbsa_postprocess": false
 }

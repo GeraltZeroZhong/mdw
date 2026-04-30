@@ -398,8 +398,7 @@ def _panel_header(ax, entry, style: PlotStyleConfig, accent_color: str, panel_in
         va="top",
         fontsize=header_font,
         fontweight="bold",
-        color=style.spine_color,
-        bbox=dict(boxstyle="round,pad=0.26", facecolor=accent_color, edgecolor="none", alpha=0.17),
+        color=accent_color,
     )
     ax.text(
         0.125,
