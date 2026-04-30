@@ -15,6 +15,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from ..config import WorkflowConfig, load_workflow_config, save_workflow_config
 from ..core import ProgressEvent, ensure_project_layout, preflight_validate, preflight_validate_existing_results, project_config_path, start_run_log
 from ..workflows import (
+    prepare_docking_only_workflow_config,
     prepare_existing_results_workflow_config,
     prepare_next_replica_workflow_config,
     run_existing_results_workflow,
@@ -169,6 +170,13 @@ class App(tk.Tk):
         ttk.Button(toolbar, text=tr("save_project", self.lang), command=self.save_project, style="Toolbar.TButton").pack(side="left", padx=6, pady=10)
         self.run_md_button = ttk.Button(toolbar, text=tr("run_md", self.lang), command=self.run_md, style="Accent.TButton")
         self.run_md_button.pack(side="left", padx=(18, 6), pady=10)
+        self.run_docking_only_button = ttk.Button(
+            toolbar,
+            text=tr("run_docking_only", self.lang),
+            command=self.run_docking_only,
+            style="Toolbar.TButton",
+        )
+        self.run_docking_only_button.pack(side="left", padx=6, pady=10)
         self.run_next_replica_button = ttk.Button(
             toolbar,
             text=tr("run_next_replica", self.lang),
@@ -440,6 +448,8 @@ class App(tk.Tk):
     def _set_run_controls_enabled(self, enabled: bool):
         if hasattr(self, "run_md_button"):
             self.run_md_button.state(["!disabled"] if enabled else ["disabled"])
+        if hasattr(self, "run_docking_only_button"):
+            self.run_docking_only_button.state(["!disabled"] if enabled else ["disabled"])
         if hasattr(self, "run_next_replica_button"):
             self.run_next_replica_button.state(["!disabled"] if enabled else ["disabled"])
         if hasattr(self, "run_existing_results_button"):
@@ -732,6 +742,13 @@ class App(tk.Tk):
 
     def run_md(self):
         self._run_in_thread(run_full_md_workflow, "full_workflow")
+
+    def run_docking_only(self):
+        self._run_in_thread(
+            run_full_md_workflow,
+            "docking_only_workflow",
+            cfg_transform=prepare_docking_only_workflow_config,
+        )
 
     def run_next_replica(self):
         self._run_in_thread(

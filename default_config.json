@@ -195,7 +195,7 @@
     "show_grid": true,
     "transparent_background": false,
     "use_minor_ticks": false,
-    "spine_color": "#3F5658",
+    "spine_color": "#000000",
     "grid_color": "#DCEDEE",
     "mean_line_color": "#2F6F70",
     "band_color": "#CFEAF1",

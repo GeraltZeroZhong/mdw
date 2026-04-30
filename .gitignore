@@ -18,6 +18,29 @@ work/
 
 # Local project/data directories
 1/
+3e7g/
 4g31/
 5mh2/
 real-5hm2/
+runpod*/
+*_downloads/
+
+# Molecular structure, docking, and MD data artifacts
+*.pdb
+*.pdbqt
+*.sdf
+*.mol2
+*.mae
+*.dcd
+*.xtc
+*.trr
+*.nc
+*.netcdf
+*.prmtop
+*.inpcrd
+*.rst7
+*.parm7
+*.top
+*.gro
+*.crd
+*.mdcrd
