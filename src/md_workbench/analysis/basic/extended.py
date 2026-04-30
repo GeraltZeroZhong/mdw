@@ -27,13 +27,17 @@ def compute_sasa_metrics(traj, protein_atom_indices, ligand_atom_indices, probe_
     if not solute_atom_indices:
         raise ValueError("No protein or ligand atoms available for SASA analysis.")
     solute_traj = traj.atom_slice(solute_atom_indices)
-    atom_sasa = md.shrake_rupley(solute_traj, mode="atom", probe_radius=probe_radius_nm)
-    index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(solute_atom_indices)}
-    protein_local = [index_map[idx] for idx in protein_atom_indices if idx in index_map]
-    ligand_local = [index_map[idx] for idx in ligand_atom_indices if idx in index_map]
-    complex_sasa = atom_sasa.sum(axis=1) * 100.0
-    protein_sasa = atom_sasa[:, protein_local].sum(axis=1) * 100.0
-    ligand_sasa = atom_sasa[:, ligand_local].sum(axis=1) * 100.0
+    complex_sasa = md.shrake_rupley(solute_traj, mode="atom", probe_radius=probe_radius_nm).sum(axis=1) * 100.0
+    protein_sasa = (
+        md.shrake_rupley(traj.atom_slice(protein_atom_indices), mode="atom", probe_radius=probe_radius_nm).sum(axis=1) * 100.0
+        if protein_atom_indices
+        else np.zeros(traj.n_frames, dtype=float)
+    )
+    ligand_sasa = (
+        md.shrake_rupley(traj.atom_slice(ligand_atom_indices), mode="atom", probe_radius=probe_radius_nm).sum(axis=1) * 100.0
+        if ligand_atom_indices
+        else np.zeros(traj.n_frames, dtype=float)
+    )
     buried = np.maximum(protein_sasa + ligand_sasa - complex_sasa, 0.0)
     return complex_sasa, protein_sasa, ligand_sasa, buried
 

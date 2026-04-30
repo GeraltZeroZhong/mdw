@@ -22,13 +22,13 @@ BUNDLE_CLUSTER_ORDER = [
 ]
 
 _BASIC_STEM_TO_CLUSTER = {
-    "rmsd_combined": STABILITY_COMPACTION_CLUSTER,
     "rmsd_replot_protein": STABILITY_COMPACTION_CLUSTER,
     "rmsd_replot_ligand": STABILITY_COMPACTION_CLUSTER,
     "min_distance_combined": STABILITY_COMPACTION_CLUSTER,
     "radius_of_gyration_combined": STABILITY_COMPACTION_CLUSTER,
     "buried_surface_combined": STABILITY_COMPACTION_CLUSTER,
-    "sasa_components_combined": STABILITY_COMPACTION_CLUSTER,
+    "sasa_complex_protein_combined": STABILITY_COMPACTION_CLUSTER,
+    "ligand_sasa_combined": STABILITY_COMPACTION_CLUSTER,
     "convergence_block_heatmap": STABILITY_COMPACTION_CLUSTER,
     "replicate_consistency_boxplot": STABILITY_COMPACTION_CLUSTER,
     "replicate_consistency_zscore_heatmap": STABILITY_COMPACTION_CLUSTER,
@@ -40,12 +40,15 @@ _BASIC_STEM_TO_CLUSTER = {
     "salt_bridge_residue_occupancy": INTERACTION_NETWORKS_CLUSTER,
     "contact_replicate_heatmap": INTERACTION_NETWORKS_CLUSTER,
     "interaction_fingerprint_heatmap": INTERACTION_NETWORKS_CLUSTER,
-    "key_contact_distance_traces": INTERACTION_NETWORKS_CLUSTER,
     "rmsf_ca_combined": STRUCTURE_POSE_CLUSTER,
     "dssp_fractions_combined": STRUCTURE_POSE_CLUSTER,
     "dssp_residue_occupancy_combined": STRUCTURE_POSE_CLUSTER,
     "ligand_com_distance_combined": STRUCTURE_POSE_CLUSTER,
     "ligand_orientation_angle_combined": STRUCTURE_POSE_CLUSTER,
+}
+
+_BASIC_PREFIX_TO_CLUSTER = {
+    "key_contact_distance_": INTERACTION_NETWORKS_CLUSTER,
 }
 
 _ADVANCED_DIR_TO_CLUSTER = {
@@ -98,7 +101,9 @@ def classify_bundle_figure(source_path: Path, source_root: Path, source_kind: st
     rel = source_path.relative_to(source_root)
     if source_kind == "basic":
         stem = source_path.stem
-        cluster = _BASIC_STEM_TO_CLUSTER.get(stem, MISC_CLUSTER)
+        cluster = _BASIC_STEM_TO_CLUSTER.get(stem)
+        if cluster is None:
+            cluster = next((value for prefix, value in _BASIC_PREFIX_TO_CLUSTER.items() if stem.startswith(prefix)), MISC_CLUSTER)
         nested = rel.parts[1:-1] if rel.parts[:1] == ("combined",) else rel.parts[:-1]
         target_rel = Path(*nested, rel.name) if nested else Path(rel.name)
         return cluster, target_rel, "basic"

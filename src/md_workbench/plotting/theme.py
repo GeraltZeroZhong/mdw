@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import shutil
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ from matplotlib.ticker import AutoMinorLocator
 
 from ..config import PlotStyleConfig
 from ..config.plot_style_defaults import (
+    AXES_TEXT_COLOR,
     SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP as MDW_CONTINUOUS_CMAP,
     SCIENTIFIC_TEAL_PINK_DIVERGING_CMAP as MDW_DIVERGING_CMAP,
 )
@@ -35,7 +37,7 @@ def subtle_edge_color(style: PlotStyleConfig) -> str:
 def contrast_text_color(color, style: PlotStyleConfig) -> str:
     rgb = to_rgb(color)
     luminance = float(rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722)
-    return "#FFFFFF" if luminance < 0.52 else style.spine_color
+    return "#FFFFFF" if luminance < 0.52 else AXES_TEXT_COLOR
 
 
 def _continuous_colormap(style: PlotStyleConfig) -> LinearSegmentedColormap:
@@ -111,11 +113,12 @@ def publication_style(style: PlotStyleConfig):
             "legend.handlelength": 1.5,
             "legend.handletextpad": 0.5,
             "legend.columnspacing": 1.0,
-            "axes.edgecolor": style.spine_color,
-            "xtick.color": style.spine_color,
-            "ytick.color": style.spine_color,
-            "axes.labelcolor": style.spine_color,
-            "text.color": style.spine_color,
+            "axes.edgecolor": AXES_TEXT_COLOR,
+            "axes.titlecolor": AXES_TEXT_COLOR,
+            "xtick.color": AXES_TEXT_COLOR,
+            "ytick.color": AXES_TEXT_COLOR,
+            "axes.labelcolor": AXES_TEXT_COLOR,
+            "text.color": AXES_TEXT_COLOR,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "savefig.bbox": "tight",
@@ -134,22 +137,35 @@ def apply_minor_ticks(ax, style: PlotStyleConfig):
     if style.use_minor_ticks:
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
-        ax.tick_params(which="minor", direction="out", length=2.5, width=max(0.6, style.axes_line_width * 0.8))
+        ax.tick_params(
+            which="minor",
+            direction="out",
+            length=2.5,
+            width=max(0.6, style.axes_line_width * 0.8),
+            color=AXES_TEXT_COLOR,
+            labelcolor=AXES_TEXT_COLOR,
+        )
 
 
 def finalize_axes(ax, style: PlotStyleConfig, xlabel: str | None = None, ylabel: str | None = None, title: str | None = None):
     if xlabel:
-        ax.set_xlabel(xlabel)
+        ax.set_xlabel(xlabel, color=AXES_TEXT_COLOR)
     if ylabel:
-        ax.set_ylabel(ylabel)
+        ax.set_ylabel(ylabel, color=AXES_TEXT_COLOR)
     if title:
-        ax.set_title(title, pad=8, weight="semibold")
+        ax.set_title(title, pad=8, weight="semibold", color=AXES_TEXT_COLOR)
     if style.show_grid:
         ax.grid(True, axis="both", linestyle="-", linewidth=0.7)
     for side in ["left", "bottom"]:
         ax.spines[side].set_linewidth(style.axes_line_width)
-        ax.spines[side].set_color(style.spine_color)
-    ax.tick_params(direction="out", length=4.0, width=style.axes_line_width)
+        ax.spines[side].set_color(AXES_TEXT_COLOR)
+    ax.tick_params(
+        direction="out",
+        length=4.0,
+        width=style.axes_line_width,
+        color=AXES_TEXT_COLOR,
+        labelcolor=AXES_TEXT_COLOR,
+    )
     apply_minor_ticks(ax, style)
 
 
@@ -186,10 +202,34 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
         caption_example="生产阶段温度与密度随时间变化。温度围绕设定值波动且密度逐步稳定，可作为体系达到稳定采样状态的辅助证据。",
         data_patterns=("md_log_parsed.csv",),
     ),
+    "temperature": FigureNoteTemplate(
+        name="温度稳定性时间序列",
+        explanation="该图展示生产阶段温度随时间的变化，用于评估恒温设置是否稳定。",
+        caption_example="生产阶段温度随时间变化。温度围绕设定值波动且无持续漂移，可作为体系热浴控制正常的辅助证据。",
+        data_patterns=("md_log_parsed.csv",),
+    ),
+    "density": FigureNoteTemplate(
+        name="密度稳定性时间序列",
+        explanation="该图展示生产阶段密度随时间的变化，用于评估体系体相平衡情况。",
+        caption_example="生产阶段密度随时间变化。密度达到相对稳定平台通常支持体系体相性质已趋于平衡。",
+        data_patterns=("md_log_parsed.csv",),
+    ),
     "energy": FigureNoteTemplate(
         name="势能与总能时间序列",
         explanation="该图展示生产阶段势能和总能随时间的变化，用于监测体系能量收敛行为以及是否存在异常漂移。",
         caption_example="生产阶段势能与总能随时间变化。能量曲线若无系统性发散，通常支持积分过程稳定；若出现持续漂移，则需检查参数化与采样设置。",
+        data_patterns=("md_log_parsed.csv",),
+    ),
+    "potential_energy": FigureNoteTemplate(
+        name="势能时间序列",
+        explanation="该图展示生产阶段势能随时间的变化，用于监测体系能量收敛行为以及是否存在异常漂移。",
+        caption_example="生产阶段势能随时间变化。势能若无系统性发散，通常支持积分过程和相互作用参数稳定。",
+        data_patterns=("md_log_parsed.csv",),
+    ),
+    "total_energy": FigureNoteTemplate(
+        name="总能时间序列",
+        explanation="该图展示生产阶段总能随时间的变化，用于监测积分稳定性和能量漂移。",
+        caption_example="生产阶段总能随时间变化。总能若未出现持续异常漂移，通常支持模拟积分过程稳定。",
         data_patterns=("md_log_parsed.csv",),
     ),
     "interaction_counts_timeseries": FigureNoteTemplate(
@@ -214,6 +254,18 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
         name="配体构象姿态指标时间序列",
         explanation="该图展示配体-口袋质心距离和配体取向角度随时间的变化，用于评估配体结合姿态是否稳定。",
         caption_example="配体-口袋质心距离与配体取向角随时间变化。若两类指标均在有限范围内波动，通常说明配体姿态相对稳定。",
+        data_patterns=("ligand_pose_metrics.csv",),
+    ),
+    "ligand_com_distance": FigureNoteTemplate(
+        name="配体-口袋质心距离时间序列",
+        explanation="该图展示配体与口袋质心距离随时间的变化，用于评估配体是否持续位于结合口袋附近。",
+        caption_example="配体-口袋质心距离随时间变化。距离较小且波动有限通常支持配体保持在结合位点附近。",
+        data_patterns=("ligand_pose_metrics.csv",),
+    ),
+    "ligand_orientation_angle": FigureNoteTemplate(
+        name="配体取向角时间序列",
+        explanation="该图展示配体取向角随时间的变化，用于评估配体姿态方向是否保持一致或发生翻转。",
+        caption_example="配体取向角随时间变化。取向角若集中在有限范围内，通常说明配体姿态方向相对稳定。",
         data_patterns=("ligand_pose_metrics.csv",),
     ),
     "ligand_torsions": FigureNoteTemplate(
@@ -271,15 +323,15 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
         data_patterns=("rmsd_combined.csv",),
     ),
     "rmsd_replot_protein": FigureNoteTemplate(
-        name="蛋白 RMSD 重绘图",
-        explanation="该图基于汇总后的蛋白主链 RMSD 数据重绘三条重复轨迹、跨重复均值及 95% 置信区间，用于标准化展示蛋白稳定性。",
-        caption_example="蛋白主链 RMSD 重绘图。该图由汇总 RMSD 数据重新组织而成，用于清晰展示重复趋势、均值曲线及其 95% 置信区间。",
+        name="蛋白主链 RMSD 跨重复汇总图",
+        explanation="该图基于汇总后的蛋白主链 RMSD 数据展示三条重复轨迹、跨重复均值及 95% 置信区间，用于评估蛋白整体稳定性的重复性。",
+        caption_example="蛋白主链 RMSD 跨重复汇总图。重复轨迹、均值曲线及其 95% 置信区间用于清晰展示蛋白稳定性在重复之间的一致性。",
         data_patterns=("rmsd_combined.csv",),
     ),
     "rmsd_replot_ligand": FigureNoteTemplate(
-        name="配体 RMSD 重绘图",
-        explanation="该图基于汇总后的配体重原子 RMSD 数据重绘三条重复轨迹、跨重复均值及 95% 置信区间，用于标准化展示配体姿态稳定性。",
-        caption_example="配体重原子 RMSD 重绘图。该图由汇总 RMSD 数据重新组织而成，用于清晰展示重复趋势、均值曲线及其 95% 置信区间。",
+        name="配体重原子 RMSD 跨重复汇总图",
+        explanation="该图基于汇总后的配体重原子 RMSD 数据展示三条重复轨迹、跨重复均值及 95% 置信区间，用于评估配体姿态稳定性的重复性。",
+        caption_example="配体重原子 RMSD 跨重复汇总图。重复轨迹、均值曲线及其 95% 置信区间用于清晰展示配体姿态稳定性在重复之间的一致性。",
         data_patterns=("rmsd_combined.csv",),
     ),
     "min_distance_combined": FigureNoteTemplate(
@@ -360,10 +412,16 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
         caption_example="多重复配体取向角汇总图。取向角若集中在有限范围内并在重复间保持一致，通常说明配体姿态较稳定。",
         data_patterns=("ligand_orientation_angle_combined.csv",),
     ),
-    "sasa_components_combined": FigureNoteTemplate(
-        name="跨重复 SASA 组分汇总图",
-        explanation="该图展示复合物、蛋白和配体的平均溶剂可及表面积随时间的变化，用于分析溶剂暴露特征。",
-        caption_example="复合物、蛋白和配体平均 SASA 随时间变化。不同组分的暴露面积变化可用于辅助解释界面埋藏和构象紧致性变化。",
+    "sasa_complex_protein_combined": FigureNoteTemplate(
+        name="跨重复蛋白-复合物 SASA 汇总图",
+        explanation="该图展示复合物和蛋白平均溶剂可及表面积随时间的变化，用于分析整体溶剂暴露和构象紧致性。",
+        caption_example="复合物与蛋白平均 SASA 随时间变化。两条曲线趋势接近且波动有限时，通常支持整体溶剂暴露状态较稳定。",
+        data_patterns=("sasa_components_combined.csv",),
+    ),
+    "ligand_sasa_combined": FigureNoteTemplate(
+        name="跨重复配体 SASA 汇总图",
+        explanation="该图单独展示配体平均溶剂可及表面积随时间的变化，避免被蛋白尺度压缩，用于评估配体暴露程度。",
+        caption_example="配体平均 SASA 随时间变化。较低且稳定的配体 SASA 通常支持配体持续处于较埋藏的结合环境。",
         data_patterns=("sasa_components_combined.csv",),
     ),
     "dssp_residue_occupancy_combined": FigureNoteTemplate(
@@ -488,9 +546,21 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
     ),
     "transition_matrix_heatmap": FigureNoteTemplate(
         name="MSM 转移矩阵热图",
-        explanation="该图展示所选活跃 MSM 分量中的状态转移概率矩阵，并辅以关键有向交换和停留/离开概率摘要，用于分析状态间的主要动力学交换路径。",
-        caption_example="MSM 转移矩阵与交换摘要图。对角元素越高表示状态自保持越强，较大的非对角转移概率或平衡通量则提示对应状态对之间存在更活跃的动力学交换。",
+        explanation="该图展示所选活跃 MSM 分量中的状态转移概率矩阵，用于直接判断各状态的自保持强度和状态间转移概率。",
+        caption_example="MSM 转移矩阵热图。对角元素越高表示状态自保持越强，较大的非对角元素提示对应状态对之间存在更活跃的动力学交换。",
         data_patterns=("transition_matrix.csv", "equilibrium_transition_flux.csv", "transition_count_matrix.csv", "active_state_mapping.csv"),
+    ),
+    "transition_dominant_exchange": FigureNoteTemplate(
+        name="MSM 主导有向交换图",
+        explanation="该图单独展示转移矩阵中最主要的非自转移路径，横轴为平衡通量或转移概率，并在条形旁标注对应转移概率。",
+        caption_example="MSM 主导有向交换图。条形越长表示对应方向的状态交换越活跃，标注的 P 值给出该方向的转移概率。",
+        data_patterns=("transition_matrix.csv", "equilibrium_transition_flux.csv", "active_state_mapping.csv"),
+    ),
+    "transition_residence_departure": FigureNoteTemplate(
+        name="MSM 状态停留与离开概率图",
+        explanation="该图单独展示每个 MSM 状态在一个 lag 内停留于本状态和离开本状态的概率质量，用于判断状态自保持和逃逸倾向。",
+        caption_example="MSM 状态停留与离开概率图。停留比例越高表示该状态在当前 lag 下越稳定；离开比例越高则提示更强的状态转换倾向。",
+        data_patterns=("transition_matrix.csv", "active_state_mapping.csv"),
     ),
     "state_network": FigureNoteTemplate(
         name="MSM 状态网络图",
@@ -506,9 +576,21 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
     ),
     "implied_timescales_lag_scan": FigureNoteTemplate(
         name="隐含时间尺度滞后扫描图",
-        explanation="该图展示固定活跃状态集合上不同滞后时间下的隐含时间尺度变化，并同时汇报各 lag 下仍可用于估计的活跃轨迹片段数量和帧覆盖度，用于评估 MSM 是否趋于近似马尔可夫行为以及数据支撑度是否充足。",
-        caption_example="不同滞后时间下的隐含时间尺度扫描图。时间尺度曲线随滞后时间趋于平台常被用作 MSM 合理性的辅助判断依据；若高 lag 下可用轨迹片段显著减少，则解释时需同时考虑统计支撑度下降。",
+        explanation="该图展示固定活跃状态集合上不同滞后时间下的隐含时间尺度变化，用于评估 MSM 是否趋于近似马尔可夫行为。",
+        caption_example="不同滞后时间下的隐含时间尺度扫描图。时间尺度曲线随滞后时间趋于平台常被用作 MSM 合理性的辅助判断依据。",
         data_patterns=("implied_timescales_lag_scan.csv", "lag_scan_diagnostics.csv", "active_state_mapping.csv"),
+    ),
+    "lag_scan_usable_segments": FigureNoteTemplate(
+        name="滞后扫描可用片段数图",
+        explanation="该图展示不同 MSM lag 下仍可用于估计的活跃轨迹片段数量，用于评估滞后时间增大后统计支撑是否下降。",
+        caption_example="滞后扫描可用片段数图。若高 lag 下可用片段显著减少，隐含时间尺度平台的解释应同时考虑统计不确定性增加。",
+        data_patterns=("lag_scan_diagnostics.csv", "active_state_mapping.csv"),
+    ),
+    "lag_scan_frame_support": FigureNoteTemplate(
+        name="滞后扫描可用帧比例图",
+        explanation="该图展示不同 MSM lag 下可用于估计的活跃帧比例，用于评估滞后扫描的帧覆盖度。",
+        caption_example="滞后扫描可用帧比例图。较高的可用帧比例代表该 lag 下仍有较充分的数据支撑；比例下降时需谨慎解释对应动力学指标。",
+        data_patterns=("lag_scan_diagnostics.csv", "active_state_mapping.csv"),
     ),
     "chapman_kolmogorov_test": FigureNoteTemplate(
         name="Chapman-Kolmogorov 验证图",
@@ -563,6 +645,15 @@ FIGURE_NOTE_TEMPLATES: dict[str, FigureNoteTemplate] = {
         explanation="该图展示绝对贡献最大的若干残基平均逐残基贡献，用于突出最可能影响结合自由能的关键位点。",
         caption_example="关键残基 MM/GBSA 逐残基贡献排序图。平均贡献绝对值较大的残基通常更值得优先结合结构信息进一步分析。",
         data_patterns=("../replica_*/mmpbsa_DECOMP.csv",),
+    ),
+}
+
+FIGURE_NOTE_PREFIX_TEMPLATES: dict[str, FigureNoteTemplate] = {
+    "key_contact_distance_": FigureNoteTemplate(
+        name="单残基关键接触距离轨迹图",
+        explanation="该图针对单个热点残基展示其与配体之间的最小重原子距离随时间变化，并保留接触占据比例、重复间均值和离散程度信息。",
+        caption_example="单残基关键接触距离轨迹图。距离长期低于接触阈值且波动有限时，通常说明该残基与配体保持稳定接触。",
+        data_patterns=("key_contact_distance_traces.csv", "contact_occupancy_distance_summary.csv"),
     ),
 }
 
@@ -708,14 +799,22 @@ def _build_fallback_note(display_name: str) -> FigureNoteTemplate:
     )
 
 
+def _template_for_stem(stem: str, display_name: str) -> FigureNoteTemplate:
+    template = FIGURE_NOTE_TEMPLATES.get(stem)
+    if template is not None:
+        return template
+    for prefix, prefix_template in FIGURE_NOTE_PREFIX_TEMPLATES.items():
+        if stem.startswith(prefix):
+            return prefix_template
+    return _build_fallback_note(display_name)
+
+
 def _write_figure_note(fig, base_path: Path, formats: list[str]) -> Path:
     if fig is None:
         primary_title, axis_lines, legend_labels = "", [], []
     else:
         primary_title, axis_lines, legend_labels = _collect_figure_context(fig)
-    template = FIGURE_NOTE_TEMPLATES.get(base_path.stem)
-    if template is None:
-        template = _build_fallback_note(primary_title or _humanize_stem(base_path.stem))
+    template = _template_for_stem(base_path.stem, primary_title or _humanize_stem(base_path.stem))
     image_files = [base_path.with_suffix(f".{fmt}").name for fmt in formats]
     data_files = _guess_reproduction_data(base_path, template.data_patterns)
     display_name = template.name
@@ -763,6 +862,16 @@ def write_figure_note(base_path: str | Path, formats: list[str] | None = None) -
             if base_path.with_suffix(suffix).exists()
         ]
     return _write_figure_note(None, base_path, list(formats))
+
+
+def remove_figure_outputs(base_path: str | Path) -> None:
+    base_path = Path(base_path)
+    if base_path.exists() and base_path.is_dir():
+        shutil.rmtree(base_path)
+    for suffix in (".png", ".svg", ".pdf", ".txt"):
+        path = base_path.with_suffix(suffix)
+        if path.exists():
+            path.unlink()
 
 
 def save_figure(fig, base_path: str | Path, style: PlotStyleConfig):

@@ -69,6 +69,14 @@ def ranked_lollipop(
     sds_arr = np.asarray(sds, dtype=float)
     if means_arr.size == 0:
         return
+    finite = np.isfinite(means_arr)
+    positive = finite & (means_arr >= 0.005)
+    if np.any(positive):
+        labels_arr = [label for label, keep in zip(labels_arr, positive) if keep]
+        means_arr = means_arr[positive]
+        sds_arr = sds_arr[positive]
+    elif not np.any(finite):
+        return
     height = max(2.8, 0.34 * len(labels_arr) + 1.4)
     axis_limit = 1.0
 

@@ -83,9 +83,11 @@ def matrix_heatmap(
     annotation_min_abs: float | None = None,
 ):
     arr = np.asarray(matrix, dtype=float)
-    height = min(max(4.8, 0.095 * len(row_labels) + 2.1), 8.75)
+    row_count = len(row_labels)
+    height = min(max(4.8, 0.125 * row_count + 2.1), 13.5)
     width = min(max(5.4, 0.8 * len(col_labels) + 2.0), 7.5)
-    ytick_positions, ytick_labels = _sparse_tick_spec(list(row_labels), 55)
+    max_y_labels = 42 if row_count > 120 else 50 if row_count > 80 else 55
+    ytick_positions, ytick_labels = _sparse_tick_spec(list(row_labels), max_y_labels)
     xtick_positions, xtick_labels = _sparse_tick_spec(list(col_labels), 16)
     vmin_eff, vmax_eff, norm = _heatmap_limits(arr, vmin=vmin, vmax=vmax, center=center)
     with publication_style(style):
@@ -114,7 +116,9 @@ def matrix_heatmap(
         cbar.ax.tick_params(labelsize=max(style.tick_size - 0.6, 6.5))
         if cbar_label:
             cbar.set_label(cbar_label)
-        if len(row_labels) > 60:
+        if row_count > 120:
+            ax.tick_params(axis="y", labelsize=max(style.tick_size - 1.4, 5.8))
+        elif row_count > 60:
             ax.tick_params(axis="y", labelsize=max(style.tick_size - 1.0, 6.2))
         if annotate:
             for i in range(arr.shape[0]):
@@ -227,7 +231,13 @@ def stacked_fraction_area(time_ns, fractions_by_label: dict[str, np.ndarray], ou
         ax.stackplot(time_ns, arrs, labels=labels, colors=colors, alpha=0.9)
         finalize_axes(ax, style, xlabel="Time (ns)", ylabel=ylabel, title=title)
         ax.set_ylim(0.0, 1.0)
-        ax.legend(frameon=False, ncol=len(labels))
+        ax.legend(
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.10),
+            ncol=min(len(labels), 4),
+            borderaxespad=0.0,
+        )
         save_figure(fig, out_base, style)
 
 

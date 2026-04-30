@@ -4,6 +4,7 @@ from pathlib import Path
 from collections import Counter
 import json
 import shutil
+import textwrap
 
 from ..config import AdvancedAnalysisConfig, BasicAnalysisConfig, MMGBSAConfig, OutputBundleConfig, RunConfig, WaterBridgeConfig
 from .figure_clusters import BUNDLE_CLUSTER_ORDER, classify_bundle_figure
@@ -19,24 +20,22 @@ THEMATIC_FIGURE_GROUPS = {
         "hbond_count_combined",
         "hbond_residue_occupancy_top20",
         "interaction_fingerprint_heatmap",
-        "key_contact_distance_traces",
         "salt_bridge_count_combined",
         "salt_bridge_residue_occupancy",
         "waterbridge_count_combined",
-        "waterbridge_count_replot",
         "waterbridge_residue_occupancy_top20",
     },
     "stability_compaction": {
         "buried_surface_combined",
         "convergence_block_heatmap",
+        "ligand_sasa_combined",
         "min_distance_combined",
         "radius_of_gyration_combined",
         "replicate_consistency_boxplot",
         "replicate_consistency_zscore_heatmap",
-        "rmsd_combined",
         "rmsd_replot_ligand",
         "rmsd_replot_protein",
-        "sasa_components_combined",
+        "sasa_complex_protein_combined",
     },
     "structure_pose": {
         "dssp_fractions_combined",
@@ -63,9 +62,13 @@ THEMATIC_FIGURE_GROUPS = {
         "chapman_kolmogorov_test",
         "implied_timescales_lag_scan",
         "implied_timescales_single_lag",
+        "lag_scan_frame_support",
+        "lag_scan_usable_segments",
         "state_network",
         "stationary_distribution",
+        "transition_dominant_exchange",
         "transition_matrix_heatmap",
+        "transition_residence_departure",
     },
     "binding_energy": {
         "mmgbsa_summary",
@@ -82,6 +85,15 @@ THEMATIC_FIGURE_LOOKUP = {
     stem: group
     for group, stems in THEMATIC_FIGURE_GROUPS.items()
     for stem in stems
+}
+THEMATIC_FIGURE_PREFIX_LOOKUP = {
+    "key_contact_distance_": "interaction_networks",
+}
+DEPRECATED_BUNDLE_FIGURE_STEMS = {
+    "key_contact_distance_traces",
+    "rmsd_combined",
+    "sasa_components_combined",
+    "waterbridge_count_replot",
 }
 FIGURE_CLUSTER_ORDER = list(THEMATIC_FIGURE_GROUPS.keys()) + ["uncategorized"]
 NONFUNCTIONAL_RELATIVE_PREFIXES = {"combined", "pca", "tica", "clustering", "msm", "snapshots"}
@@ -133,7 +145,12 @@ def _cluster_relative_path(file_path: Path, source_root: Path) -> Path:
 
 
 def _classify_figure_destination(file_path: Path, source_root: Path, label: str) -> tuple[str, Path]:
-    group = THEMATIC_FIGURE_LOOKUP.get(file_path.stem, "uncategorized")
+    group = THEMATIC_FIGURE_LOOKUP.get(file_path.stem)
+    if group is None:
+        group = next(
+            (prefix_group for prefix, prefix_group in THEMATIC_FIGURE_PREFIX_LOOKUP.items() if file_path.stem.startswith(prefix)),
+            "uncategorized",
+        )
     relative = _cluster_relative_path(file_path, source_root)
     if group == "uncategorized":
         return group, Path(label) / relative
@@ -146,6 +163,8 @@ def _collect_clustered_figures(src_root: Path, target_root: Path, label: str):
     if src_root.exists():
         for path in sorted(_iter_files(src_root)):
             if path.suffix.lower() in FIGURE_EXTS:
+                if path.stem in DEPRECATED_BUNDLE_FIGURE_STEMS:
+                    continue
                 group, relative = _classify_figure_destination(path, src_root, label)
                 dest = target_root / group / relative
                 copied.append(_copy_to_path(path, dest))
@@ -182,6 +201,55 @@ def _write_organized_figure_notes(figure_files: list[str]):
         note_path = write_figure_note(base_path, formats=sorted(formats))
         note_files.append(str(note_path.resolve()))
     return note_files
+
+
+def _preview_label(file_path: Path, group_root: Path) -> str:
+    label = file_path.relative_to(group_root).with_suffix("").as_posix()
+    if len(label) <= 54:
+        return label
+    return "\n".join(textwrap.wrap(label, width=42, max_lines=2, placeholder="..."))
+
+
+def _write_figure_preview_sheets(figures_root: Path) -> list[str]:
+    try:
+        import matplotlib.image as mpimg
+        import matplotlib.pyplot as plt
+    except Exception:
+        return []
+
+    preview_root = ensure_dir(figures_root / "_previews")
+    preview_files: list[str] = []
+    for group in FIGURE_CLUSTER_ORDER:
+        group_root = figures_root / group
+        if not group_root.exists():
+            continue
+        image_paths = sorted(path for path in group_root.rglob("*.png") if "_previews" not in path.parts)
+        if not image_paths:
+            continue
+
+        cols = min(4, max(1, len(image_paths)))
+        rows = (len(image_paths) + cols - 1) // cols
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3.1, rows * 2.6), squeeze=False)
+        fig.patch.set_facecolor("white")
+
+        for ax in axes.ravel():
+            ax.set_axis_off()
+
+        for ax, image_path in zip(axes.ravel(), image_paths):
+            try:
+                ax.imshow(mpimg.imread(image_path))
+            except Exception:
+                continue
+            ax.set_title(_preview_label(image_path, group_root), fontsize=7.2, color="black", pad=4)
+
+        fig.suptitle(f"{group} preview", fontsize=12, color="black", weight="semibold")
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
+        out_path = preview_root / f"{group}.png"
+        fig.savefig(out_path, dpi=180, facecolor="white", bbox_inches="tight")
+        plt.close(fig)
+        preview_files.append(str(out_path.resolve()))
+    return preview_files
+
 
 def _collect_simulation_logs(run_cfg: RunConfig, target_root: Path):
     copied = []
@@ -249,6 +317,7 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
     if bundle_cfg.include_simulation_logs:
         data_files.extend(_collect_simulation_logs(run_cfg, data_root))
     note_files = _write_organized_figure_notes(figure_files)
+    preview_files = _write_figure_preview_sheets(figures_root)
 
     ordered_cluster_counts = {
         group: int(figure_cluster_counts[group])
@@ -262,11 +331,14 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         "data_root": str(data_root.resolve()),
         "n_figure_files": len(figure_files),
         "n_figure_note_files": len(note_files),
+        "n_preview_files": len(preview_files),
         "n_data_files": len(data_files),
         "figure_clusters": ordered_cluster_counts,
+        "preview_files": preview_files,
         "notes": [
             "This project stores generated process files under the project work directory and curated deliverables under the project results directory.",
             "figures_root organizes bundled figures by information clusters so panels that belong in one manuscript composite figure stay together.",
+            "figures_root/_previews contains PNG-only contact sheets for quick visual review and is not treated as a manuscript figure set.",
             "Each bundled figure note is regenerated inside figures_root so its reproducibility section references bundled process_data files.",
             "data_root collects CSV/JSON/TXT/LOG/DAT/PDB analysis outputs and simulation logs, but does not duplicate heavy trajectory DCD files.",
             "The figure and process-data bundle directories are refreshed on each organize step to avoid stale outputs from earlier layouts.",

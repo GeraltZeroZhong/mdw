@@ -355,7 +355,8 @@ def run_advanced_analysis(
         if singular_vals.ndim == 1 and singular_vals.size > 0:
             save_csv(Path(cfg.analysis_root) / "tica" / "singular_values.csv", ["component", "singular_value"], [[i + 1, float(v)] for i, v in enumerate(singular_vals)])
             if plot_tica:
-                plot_line_profile(np.arange(1, len(singular_vals) + 1), singular_vals, Path(cfg.analysis_root) / "tica" / "singular_values", "tIC index", "Singular value", "tICA singular values", style, color=style.accent_color)
+                shown = singular_vals[:40]
+                plot_line_profile(np.arange(1, len(shown) + 1), shown, Path(cfg.analysis_root) / "tica" / "singular_values", "tIC index", "Singular value", "Leading tICA singular values", style, color=style.accent_color)
     except Exception:
         pass
     if plot_tica:
@@ -549,7 +550,7 @@ def run_advanced_analysis(
             if its.ndim == 1 and its.size > 0:
                 save_csv(Path(cfg.analysis_root) / "msm" / "implied_timescales_single_lag.csv", ["index", "timescale_frames"], [[i + 1, float(v)] for i, v in enumerate(its)])
                 if plot_msm:
-                    plot_line_profile(np.arange(1, len(its) + 1), its, Path(cfg.analysis_root) / "msm" / "implied_timescales_single_lag", "Process index", "Timescale (frames)", f"MSM implied timescales at lag = {safe_msm_lag} frames", style, color=style.accent_color)
+                    plot_line_profile(np.arange(1, len(its) + 1), its, Path(cfg.analysis_root) / "msm" / "implied_timescales_single_lag", "Process index", "Timescale (frames)", f"MSM implied timescales at lag = {safe_msm_lag} frames", style, color=style.accent_color, yscale="log")
         except Exception as exc:
             msm_notes["timescales_error"] = str(exc)
 

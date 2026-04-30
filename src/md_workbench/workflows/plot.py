@@ -8,12 +8,12 @@ from types import SimpleNamespace
 
 from pathlib import Path
 import numpy as np
-import matplotlib.pyplot as plt
 
 from ..config import WorkflowConfig
 from ..config.plot_style_defaults import apply_plot_style_palette
 from ..core import ensure_project_layout, find_ligand_residue, normalize_workflow_paths, organize_outputs, read_dict_csv
 from ..core.progress import ProgressCallback, emit_progress
+from ..plotting.basic_combined import _key_contact_axis_cap, _key_contact_out_base, plot_key_contact_distance_figure
 from ..plotting.bars import ranked_distance_lollipop, ranked_lollipop
 from ..plotting.advanced import (
     plot_chapman_kolmogorov_test,
@@ -33,12 +33,10 @@ from ..plotting.heatmaps import interaction_fingerprint_heatmap, matrix_heatmap,
 from ..plotting.residue_labels import compact_replica_name, compact_residue_label
 from ..plotting.series import (
     direct_label_line_series,
-    draw_publication_replicate_summary,
-    draw_summary_band,
     publication_replicate_series,
     shaded_profile,
 )
-from ..plotting.theme import finalize_axes, publication_style, save_figure
+from ..plotting.theme import remove_figure_outputs
 from ..postprocess.mmgbsa import run_mmgbsa_postprocess, summarize_mmgbsa_postprocess_result
 
 
@@ -164,6 +162,23 @@ def _replica_labels(rows: list[dict[str, str]], value_suffix: str) -> list[str]:
     return [compact_replica_name(key[: -len(suffix_token)]) for key in keys]
 
 
+def _metric_max_abs_from_csv(csv_path: Path, value_suffix: str) -> float | None:
+    if not csv_path.exists():
+        return None
+    rows = read_dict_csv(csv_path)
+    if not rows:
+        return None
+    try:
+        stack = _replica_stack(rows, value_suffix)
+    except Exception:
+        return None
+    finite = np.asarray(stack, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return None
+    return float(np.nanmax(np.abs(finite)))
+
+
 def _replot_replicate_metric(
     csv_path: Path,
     out_base: Path,
@@ -207,35 +222,7 @@ def _replot_combined_rmsd(basic_root: Path, cfg: WorkflowConfig) -> bool:
     ligand_stack = _replica_stack(rows, "ligand_heavy_rmsd_A")
     protein_labels = _replica_labels(rows, "protein_backbone_rmsd_A")
     ligand_labels = _replica_labels(rows, "ligand_heavy_rmsd_A")
-    with publication_style(cfg.plot_style):
-        fig, axes = plt.subplots(2, 1, figsize=(7.6, 5.8), sharex=True)
-        top_payload = draw_publication_replicate_summary(
-            axes[0],
-            time_ns,
-            protein_stack,
-            cfg.plot_style,
-            replicate_labels=protein_labels,
-            rolling_window_fraction=cfg.basic.rolling_window_fraction,
-        )
-        draw_publication_replicate_summary(
-            axes[1],
-            time_ns,
-            ligand_stack,
-            cfg.plot_style,
-            replicate_labels=ligand_labels,
-            rolling_window_fraction=cfg.basic.rolling_window_fraction,
-        )
-        finalize_axes(axes[0], cfg.plot_style, ylabel="Protein backbone RMSD (Å)", title="Protein backbone")
-        finalize_axes(axes[1], cfg.plot_style, xlabel="Time (ns)", ylabel="Ligand heavy-atom RMSD (Å)", title="Ligand heavy-atom")
-        fig.suptitle("RMSD across replicas", y=1.03, weight="semibold", fontsize=cfg.plot_style.title_size + 1.0)
-        fig.legend(
-            handles=top_payload["legend_handles"],
-            frameon=False,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.995),
-            ncol=5,
-        )
-        save_figure(fig, basic_root / "rmsd_combined", cfg.plot_style)
+    remove_figure_outputs(basic_root / "rmsd_combined")
 
     publication_replicate_series(
         time_ns,
@@ -243,7 +230,7 @@ def _replot_combined_rmsd(basic_root: Path, cfg: WorkflowConfig) -> bool:
         "Protein backbone RMSD (Å)",
         basic_root / "rmsd_replot_protein",
         cfg.plot_style,
-        title="Protein backbone RMSD replot",
+        title="Protein backbone RMSD across replicas",
         replicate_labels=protein_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
@@ -253,7 +240,7 @@ def _replot_combined_rmsd(basic_root: Path, cfg: WorkflowConfig) -> bool:
         "Ligand heavy-atom RMSD (Å)",
         basic_root / "rmsd_replot_ligand",
         cfg.plot_style,
-        title="Ligand heavy-atom RMSD replot",
+        title="Ligand heavy-atom RMSD across replicas",
         replicate_labels=ligand_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
@@ -289,6 +276,7 @@ def _replot_key_contact_traces(basic_root: Path, cfg: WorkflowConfig) -> bool:
         residue_rows = grouped[label]
         panel_payloads.append(
             {
+                "label": label,
                 "display_label": compact_residue_label(label),
                 "time_ns": _numeric_column(residue_rows, "time_ns"),
                 "mean": _numeric_column(residue_rows, "mean_distance_A"),
@@ -298,73 +286,23 @@ def _replot_key_contact_traces(basic_root: Path, cfg: WorkflowConfig) -> bool:
             }
         )
 
-    with publication_style(cfg.plot_style):
-        n_panels = len(panel_payloads)
-        fig, axes = plt.subplots(n_panels, 1, figsize=(7.6, 1.42 * n_panels + 1.4), sharex=True, sharey=True)
-        axes_arr = np.atleast_1d(axes)
-        upper = np.concatenate([payload["mean"] + payload["sd"] for payload in panel_payloads])
-        finite_upper = upper[np.isfinite(upper)]
-        axis_cap = None
-        clipped = False
-        if finite_upper.size:
-            focus_limit = float(np.nanpercentile(finite_upper, 97.5))
-            cutoff_focus = cfg.basic.contact_cutoff_nm * 10.0 * 2.4
-            axis_cap = max(6.0, cutoff_focus, focus_limit)
-            axis_cap = float(np.ceil(axis_cap * 2.0) / 2.0)
-            clipped = float(np.nanmax(finite_upper)) > axis_cap + 1e-9
-        for idx, (ax, payload) in enumerate(zip(axes_arr, panel_payloads)):
-            ax.axhline(
-                cfg.basic.contact_cutoff_nm * 10.0,
-                color=cfg.plot_style.spine_color,
-                linewidth=0.9,
-                linestyle=(0, (3, 3)),
-                alpha=0.48,
-                zorder=0,
-            )
-            draw_summary_band(
-                ax,
-                payload["time_ns"],
-                payload["mean"],
-                payload["sd"],
-                cfg.plot_style,
-                color=payload["color"],
-                rolling_window_fraction=cfg.basic.rolling_window_fraction,
-            )
-            finalize_axes(ax, cfg.plot_style, xlabel="Time (ns)" if idx == n_panels - 1 else None)
-            if idx != n_panels - 1:
-                ax.tick_params(labelbottom=False)
-            ax.set_ylabel("")
-            panel_label = payload["display_label"]
-            if np.isfinite(payload["occupancy"]):
-                panel_label = f"{panel_label}   {payload['occupancy']:.0%}"
-            ax.text(
-                0.01,
-                0.86,
-                panel_label,
-                transform=ax.transAxes,
-                ha="left",
-                va="top",
-                color=payload["color"],
-                fontsize=max(cfg.plot_style.legend_size + 0.3, 7.0),
-                weight="bold",
-            )
-        if axis_cap is not None:
-            axes_arr[0].set_ylim(0.0, axis_cap)
-        fig.suptitle("Key contact distance trajectories", y=1.02, weight="semibold", fontsize=cfg.plot_style.title_size + 1.0)
-        fig.supylabel("Minimum heavy-atom distance (Å)")
-        helper = "each hotspot gets its own panel; colored line = rolling mean; band = across-replica spread"
-        if clipped and axis_cap is not None:
-            helper += f"; spikes clipped above {axis_cap:.1f} Å"
-        fig.text(
-            0.015,
-            0.99,
-            helper,
-            fontsize=max(cfg.plot_style.legend_size - 0.25, 6.6),
-            color=cfg.plot_style.spine_color,
-            alpha=0.78,
-            va="top",
+    remove_figure_outputs(basic_root / "key_contact_distance_traces")
+    for payload in panel_payloads:
+        axis_cap, clipped = _key_contact_axis_cap(payload["mean"], payload["sd"], cfg.basic.contact_cutoff_nm * 10.0)
+        plot_key_contact_distance_figure(
+            payload["time_ns"],
+            payload["mean"],
+            payload["sd"],
+            _key_contact_out_base(basic_root, payload["label"]),
+            cfg.plot_style,
+            display_label=payload["display_label"],
+            color=payload["color"],
+            occupancy=payload["occupancy"],
+            contact_cutoff_A=cfg.basic.contact_cutoff_nm * 10.0,
+            rolling_window_fraction=cfg.basic.rolling_window_fraction,
+            axis_cap=axis_cap,
+            clipped=clipped,
         )
-        save_figure(fig, basic_root / "key_contact_distance_traces", cfg.plot_style)
     return True
 
 
@@ -693,15 +631,19 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         rolling_window_fraction=rolling_window_fraction,
         cfg=cfg,
     )
-    _replot_replicate_metric(
-        basic_root / "buried_surface_combined.csv",
-        basic_root / "buried_surface_combined",
-        value_suffix="buried_surface_A2",
-        ylabel="Area (Å²)",
-        title="Buried surface area (Å²)",
-        rolling_window_fraction=rolling_window_fraction,
-        cfg=cfg,
-    )
+    buried_csv = basic_root / "buried_surface_combined.csv"
+    if (_metric_max_abs_from_csv(buried_csv, "buried_surface_A2") or 0.0) >= 1.0:
+        _replot_replicate_metric(
+            buried_csv,
+            basic_root / "buried_surface_combined",
+            value_suffix="buried_surface_A2",
+            ylabel="Area (Å²)",
+            title="Buried surface area (Å²)",
+            rolling_window_fraction=rolling_window_fraction,
+            cfg=cfg,
+        )
+    else:
+        remove_figure_outputs(basic_root / "buried_surface_combined")
     _replot_replicate_metric(
         basic_root / "ligand_com_distance_combined.csv",
         basic_root / "ligand_com_distance_combined",
@@ -725,19 +667,30 @@ def _run_basic_replot(cfg: WorkflowConfig) -> str | None:
         rows = read_dict_csv(sasa_csv)
         if rows:
             time_ns = _numeric_column(rows, "time_ns")
+            remove_figure_outputs(basic_root / "sasa_components_combined")
             direct_label_line_series(
                 time_ns,
                 [
                     _numeric_column(rows, "complex_sasa_mean_A2"),
                     _numeric_column(rows, "protein_sasa_mean_A2"),
-                    _numeric_column(rows, "ligand_sasa_mean_A2"),
                 ],
-                ["Complex SASA", "Protein SASA", "Ligand SASA"],
+                ["Complex SASA", "Protein SASA"],
                 "Area (Å²)",
-                basic_root / "sasa_components_combined",
+                basic_root / "sasa_complex_protein_combined",
                 cfg.plot_style,
-                title="SASA components across replicas",
-                colors=[cfg.plot_style.protein_color, cfg.plot_style.accent_color, cfg.plot_style.ligand_color],
+                title="Protein-complex SASA across replicas",
+                colors=[cfg.plot_style.protein_color, cfg.plot_style.accent_color],
+                rolling_window_fraction=rolling_window_fraction,
+            )
+            direct_label_line_series(
+                time_ns,
+                [_numeric_column(rows, "ligand_sasa_mean_A2")],
+                ["Ligand SASA"],
+                "Area (Å²)",
+                basic_root / "ligand_sasa_combined",
+                cfg.plot_style,
+                title="Ligand SASA across replicas",
+                colors=[cfg.plot_style.ligand_color],
                 rolling_window_fraction=rolling_window_fraction,
             )
     return str(basic_root.resolve())
@@ -764,16 +717,7 @@ def _run_waterbridge_replot(cfg: WorkflowConfig) -> str | None:
         replicate_labels=count_labels,
         rolling_window_fraction=cfg.basic.rolling_window_fraction,
     )
-    publication_replicate_series(
-        time_ns,
-        count_stack,
-        "Number of bridging waters",
-        water_root / "waterbridge_count_replot",
-        cfg.plot_style,
-        title="Strict water-bridge count replot",
-        replicate_labels=count_labels,
-        rolling_window_fraction=cfg.basic.rolling_window_fraction,
-    )
+    remove_figure_outputs(water_root / "waterbridge_count_replot")
     occupancy_path = water_root / "waterbridge_residue_occupancy_combined.csv"
     if occupancy_path.exists():
         occupancy_rows = read_dict_csv(occupancy_path)[:20]
@@ -967,13 +911,14 @@ def _run_advanced_replot(cfg: WorkflowConfig) -> str | None:
         if singular_path.exists():
             rows = read_dict_csv(singular_path)
             if rows:
+                rows = rows[:40]
                 plot_line_profile(
                     _numeric_column(rows, "component"),
                     _numeric_column(rows, "singular_value"),
                     advanced_root / "tica" / "singular_values",
                     "tIC index",
                     "Singular value",
-                    "tICA singular values",
+                    "Leading tICA singular values",
                     cfg.plot_style,
                     color=cfg.plot_style.accent_color,
                 )
@@ -1129,6 +1074,7 @@ def _run_advanced_replot(cfg: WorkflowConfig) -> str | None:
                     f"MSM implied timescales at lag = {int(notes.get('used_safe_msm_lag_frames', cfg.advanced.msm_lag_frames))} frames",
                     cfg.plot_style,
                     color=cfg.plot_style.accent_color,
+                    yscale="log",
                 )
                 did_plot = True
         lag_scan_path = msm_root / "implied_timescales_lag_scan.csv"
