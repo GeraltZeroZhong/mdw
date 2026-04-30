@@ -112,6 +112,18 @@ def prepare_next_replica_workflow_config(cfg: WorkflowConfig) -> WorkflowConfig:
     return cfg
 
 
+def prepare_docking_only_workflow_config(cfg: WorkflowConfig) -> WorkflowConfig:
+    cfg = normalize_workflow_paths(deepcopy(cfg))
+    cfg.do_prep = True
+    cfg.do_run_md = False
+    cfg.do_basic_analysis = False
+    cfg.do_waterbridge_analysis = False
+    cfg.do_advanced_analysis = False
+    cfg.do_mmgbsa_postprocess = False
+    cfg.output_bundle.enabled = False
+    return cfg
+
+
 def _next_replica_total_units(cfg: WorkflowConfig) -> int:
     return max(1 + int(bool(cfg.do_prep)), 1)
 

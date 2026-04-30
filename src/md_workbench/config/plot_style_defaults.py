@@ -2,7 +2,8 @@ from __future__ import annotations
 
 DEFAULT_PLOT_STYLE_PRESET = "palette1"
 CUSTOM_PLOT_STYLE_PRESET = "custom"
-PLOT_STYLE_PRESET_CHOICES = ("palette1", "palette2", CUSTOM_PLOT_STYLE_PRESET)
+PLOT_STYLE_PRESET_CHOICES = ("palette1", "palette2", "zero", "nature", CUSTOM_PLOT_STYLE_PRESET)
+AXES_TEXT_COLOR = "#000000"
 
 DEFAULT_PLOT_FORMATS = ("png", "svg")
 
@@ -24,7 +25,7 @@ DEFAULT_PLOT_RENDERING = {
 }
 
 SCIENTIFIC_TEAL_PINK_COLORS = {
-    "spine_color": "#3F5658",
+    "spine_color": AXES_TEXT_COLOR,
     "grid_color": "#DCEDEE",
     "mean_line_color": "#2F6F70",
     "band_color": "#CFEAF1",
@@ -40,7 +41,7 @@ SCIENTIFIC_TEAL_PINK_COLORS = {
 }
 
 DEEP_BLUE_MAGENTA_COLORS = {
-    "spine_color": "#1A318B",
+    "spine_color": AXES_TEXT_COLOR,
     "grid_color": "#B9D2F3",
     "mean_line_color": "#496CCE",
     "band_color": "#E6F0FE",
@@ -53,6 +54,38 @@ DEEP_BLUE_MAGENTA_COLORS = {
     "total_energy_color": "#82AAE7",
     "bar_color": "#82AAE7",
     "accent_color": "#E46B90",
+}
+
+ZERO_BLUE_CYAN_PINK_COLORS = {
+    "spine_color": AXES_TEXT_COLOR,
+    "grid_color": "#DCEFFC",
+    "mean_line_color": "#19324D",
+    "band_color": "#DCEFFC",
+    "protein_color": "#0F6C7A",
+    "ligand_color": "#2FA7C9",
+    "distance_color": "#3B6FF5",
+    "temperature_color": "#0F6C7A",
+    "density_color": "#A8C8C1",
+    "potential_energy_color": "#19324D",
+    "total_energy_color": "#2FA7C9",
+    "bar_color": "#2FA7C9",
+    "accent_color": "#E66AA3",
+}
+
+NATURE_RED_BLACK_COLORS = {
+    "spine_color": AXES_TEXT_COLOR,
+    "grid_color": "#D9D9D9",
+    "mean_line_color": "#E64B35",
+    "band_color": "#FCE5E0",
+    "protein_color": "#000000",
+    "ligand_color": "#E64B35",
+    "distance_color": "#DC0000",
+    "temperature_color": "#4D4D4D",
+    "density_color": "#7F7F7F",
+    "potential_energy_color": "#000000",
+    "total_energy_color": "#DC0000",
+    "bar_color": "#E64B35",
+    "accent_color": "#DC0000",
 }
 
 SCIENTIFIC_TEAL_PINK_CATEGORICAL_PALETTE = (
@@ -81,6 +114,31 @@ DEEP_BLUE_MAGENTA_CATEGORICAL_PALETTE = (
     "#9A133D",
 )
 
+ZERO_BLUE_CYAN_PINK_CATEGORICAL_PALETTE = (
+    "#19324D",
+    "#0F6C7A",
+    "#2FA7C9",
+    "#3B6FF5",
+    "#A8C8C1",
+    "#DCEFFC",
+    "#F6C8D7",
+    "#FF9BB8",
+    "#E66AA3",
+)
+
+NATURE_RED_BLACK_CATEGORICAL_PALETTE = (
+    "#000000",
+    "#E64B35",
+    "#4D4D4D",
+    "#DC0000",
+    "#7F7F7F",
+    "#B22222",
+    "#BDBDBD",
+    "#8B0000",
+    "#F39B7F",
+    "#2B2B2B",
+)
+
 SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP = "mdw_teal_purple"
 SCIENTIFIC_TEAL_PINK_DIVERGING_CMAP = "mdw_teal_pink_diverging"
 
@@ -95,12 +153,29 @@ PLOT_STYLE_PRESETS = {
         "categorical_palette": DEEP_BLUE_MAGENTA_CATEGORICAL_PALETTE,
         "cmap_continuous": SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
     },
+    "zero": {
+        "colors": ZERO_BLUE_CYAN_PINK_COLORS,
+        "categorical_palette": ZERO_BLUE_CYAN_PINK_CATEGORICAL_PALETTE,
+        "cmap_continuous": SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
+    },
+    "nature": {
+        "colors": NATURE_RED_BLACK_COLORS,
+        "categorical_palette": NATURE_RED_BLACK_CATEGORICAL_PALETTE,
+        "cmap_continuous": SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
+    },
 }
 
 PLOT_STYLE_PRESET_ALIASES = {
     "scientific_teal_pink": "palette1",
     "deep_blue_magenta": "palette2",
     "blue_magenta": "palette2",
+    "zero_palette": "zero",
+    "zero_color": "zero",
+    "zero_colours": "zero",
+    "zero_colors": "zero",
+    "nature_red_black": "nature",
+    "npg_red_black": "nature",
+    "nature_style": "nature",
 }
 
 
