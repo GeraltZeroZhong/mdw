@@ -225,6 +225,8 @@ FIELD_LABELS = {
     "figures_dir_name": "Combined figures folder name",
     "data_dir_name": "Process data folder name",
     "include_simulation_logs": "Include simulation logs",
+    "include_report_docx": "Build workflow report DOCX",
+    "report_docx_name": "Workflow report DOCX filename",
     "sasa_probe_radius_nm": "SASA probe radius (nm)",
     "convergence_n_blocks": "Convergence blocks",
     "rolling_window_fraction": "Rolling-window fraction",

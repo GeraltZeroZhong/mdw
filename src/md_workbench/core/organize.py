@@ -272,7 +272,19 @@ def _clear_dir_contents(root: Path):
             child.unlink()
 
 
-def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_cfg: BasicAnalysisConfig, water_cfg: WaterBridgeConfig, advanced_cfg: AdvancedAnalysisConfig, mmgbsa_cfg: MMGBSAConfig, do_basic: bool, do_water: bool, do_advanced: bool, do_mmgbsa: bool) -> dict[str, str | int]:
+def organize_outputs(
+    bundle_cfg: OutputBundleConfig,
+    run_cfg: RunConfig,
+    basic_cfg: BasicAnalysisConfig,
+    water_cfg: WaterBridgeConfig,
+    advanced_cfg: AdvancedAnalysisConfig,
+    mmgbsa_cfg: MMGBSAConfig,
+    do_basic: bool,
+    do_water: bool,
+    do_advanced: bool,
+    do_mmgbsa: bool,
+    workflow_cfg=None,
+) -> dict[str, str | int]:
     if not bundle_cfg.enabled:
         return {}
 
@@ -318,6 +330,17 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         data_files.extend(_collect_simulation_logs(run_cfg, data_root))
     note_files = _write_organized_figure_notes(figure_files)
     preview_files = _write_figure_preview_sheets(figures_root)
+    report_payload = {}
+    if bundle_cfg.include_report_docx and figure_files:
+        from ..report import build_workflow_report
+
+        report_payload = build_workflow_report(
+            bundle_root,
+            figures_dir_name=bundle_cfg.figures_dir_name,
+            data_dir_name=bundle_cfg.data_dir_name,
+            report_docx_name=bundle_cfg.report_docx_name,
+            workflow_cfg=workflow_cfg,
+        )
 
     ordered_cluster_counts = {
         group: int(figure_cluster_counts[group])
@@ -333,6 +356,9 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
         "n_figure_note_files": len(note_files),
         "n_preview_files": len(preview_files),
         "n_data_files": len(data_files),
+        "report_docx": report_payload.get("report_docx", ""),
+        "n_report_figures": report_payload.get("n_report_figures", 0),
+        "docking_figure": report_payload.get("docking_figure", ""),
         "figure_clusters": ordered_cluster_counts,
         "preview_files": preview_files,
         "notes": [
@@ -340,6 +366,7 @@ def organize_outputs(bundle_cfg: OutputBundleConfig, run_cfg: RunConfig, basic_c
             "figures_root organizes bundled figures by information clusters so panels that belong in one manuscript composite figure stay together.",
             "figures_root/_previews contains PNG-only contact sheets for quick visual review and is not treated as a manuscript figure set.",
             "Each bundled figure note is regenerated inside figures_root so its reproducibility section references bundled process_data files.",
+            "The report DOCX is built locally from bundled figures, regenerated figure notes, and bundled process_data files.",
             "data_root collects CSV/JSON/TXT/LOG/DAT/PDB analysis outputs and simulation logs, but does not duplicate heavy trajectory DCD files.",
             "The figure and process-data bundle directories are refreshed on each organize step to avoid stale outputs from earlier layouts.",
         ],

@@ -407,7 +407,15 @@ ADVANCED_FIELD_GROUPS = {
         {
             "title": "Bundle Layout",
             "hint": "Bundle figures and process data into stable folders for sharing and downstream review.",
-            "fields": ["enabled", "root", "figures_dir_name", "data_dir_name", "include_simulation_logs"],
+            "fields": [
+                "enabled",
+                "root",
+                "figures_dir_name",
+                "data_dir_name",
+                "include_simulation_logs",
+                "include_report_docx",
+                "report_docx_name",
+            ],
         },
     ],
     "mmgbsa": [
