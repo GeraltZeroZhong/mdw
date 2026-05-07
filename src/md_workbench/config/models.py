@@ -259,6 +259,8 @@ class OutputBundleConfig:
     figures_dir_name: str = "figures_combined"
     data_dir_name: str = "process_data"
     include_simulation_logs: bool = True
+    include_report_docx: bool = True
+    report_docx_name: str = "workflow_report.docx"
 
 
 @dataclass

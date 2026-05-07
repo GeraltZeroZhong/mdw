@@ -421,6 +421,7 @@ def run_full_md_workflow(cfg: WorkflowConfig, progress_callback: ProgressCallbac
         cfg.do_waterbridge_analysis,
         cfg.do_advanced_analysis,
         cfg.do_mmgbsa_postprocess,
+        workflow_cfg=cfg,
     )
     completed_units += 1
     emit_progress(progress_callback, completed_units, total_units, "organize_outputs", "Workflow outputs organized")

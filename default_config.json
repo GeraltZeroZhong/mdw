@@ -227,7 +227,9 @@
     "root": "results",
     "figures_dir_name": "figures_combined",
     "data_dir_name": "process_data",
-    "include_simulation_logs": true
+    "include_simulation_logs": true,
+    "include_report_docx": true,
+    "report_docx_name": "workflow_report.docx"
   },
   "do_prep": true,
   "do_run_md": true,

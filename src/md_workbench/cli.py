@@ -5,6 +5,7 @@ import argparse
 from .config import load_workflow_config
 from .core import start_run_log
 from .gui import main as gui_main
+from .report import build_workflow_report_for_config
 from .self_check import run_self_check
 from .workflows import (
     prepare_existing_results_workflow_config,
@@ -18,7 +19,7 @@ from .workflows import (
 
 def main():
     parser = argparse.ArgumentParser(description="MD Workbench CLI")
-    parser.add_argument("mode", choices=["run", "next-replica", "existing-results", "plot", "gui", "self-check"])
+    parser.add_argument("mode", choices=["run", "next-replica", "existing-results", "plot", "report", "gui", "self-check"])
     parser.add_argument("config_positional", nargs="?", default=None)
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
@@ -40,6 +41,7 @@ def main():
         "next-replica": "next_replica_workflow",
         "existing-results": "existing_results_workflow",
         "plot": "plot_workflow",
+        "report": "report_workflow",
         "self-check": "self_check",
     }[args.mode]
     log_session = start_run_log(effective_cfg.workspace_root, run_type)
@@ -54,6 +56,8 @@ def main():
             outputs = run_existing_results_workflow(effective_cfg)
         elif args.mode == "plot":
             outputs = run_plot_workflow(effective_cfg)
+        elif args.mode == "report":
+            outputs = build_workflow_report_for_config(effective_cfg)
         else:
             outputs = run_self_check(effective_cfg)
         log_session.log_json("Workflow outputs", outputs)
