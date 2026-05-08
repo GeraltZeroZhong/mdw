@@ -229,24 +229,25 @@ def _write_figure_preview_sheets(figures_root: Path) -> list[str]:
 
         cols = min(4, max(1, len(image_paths)))
         rows = (len(image_paths) + cols - 1) // cols
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3.1, rows * 2.6), squeeze=False)
-        fig.patch.set_facecolor("white")
+        with plt.rc_context({"font.family": "sans-serif", "font.sans-serif": ["Arial"]}):
+            fig, axes = plt.subplots(rows, cols, figsize=(cols * 3.1, rows * 2.6), squeeze=False)
+            fig.patch.set_facecolor("white")
 
-        for ax in axes.ravel():
-            ax.set_axis_off()
+            for ax in axes.ravel():
+                ax.set_axis_off()
 
-        for ax, image_path in zip(axes.ravel(), image_paths):
-            try:
-                ax.imshow(mpimg.imread(image_path))
-            except Exception:
-                continue
-            ax.set_title(_preview_label(image_path, group_root), fontsize=7.2, color="black", pad=4)
+            for ax, image_path in zip(axes.ravel(), image_paths):
+                try:
+                    ax.imshow(mpimg.imread(image_path))
+                except Exception:
+                    continue
+                ax.set_title(_preview_label(image_path, group_root), fontsize=7.2, color="black", pad=4)
 
-        fig.suptitle(f"{group} preview", fontsize=12, color="black", weight="semibold")
-        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
-        out_path = preview_root / f"{group}.png"
-        fig.savefig(out_path, dpi=180, facecolor="white", bbox_inches="tight")
-        plt.close(fig)
+            fig.suptitle(f"{group} preview", fontsize=12, color="black", weight="semibold")
+            fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
+            out_path = preview_root / f"{group}.png"
+            fig.savefig(out_path, dpi=180, facecolor="white", bbox_inches="tight")
+            plt.close(fig)
         preview_files.append(str(out_path.resolve()))
     return preview_files
 

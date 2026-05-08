@@ -6,8 +6,8 @@ from typing import Any
 from .plot_style_defaults import (
     DEFAULT_PLOT_RENDERING,
     DEFAULT_PLOT_STYLE_PRESET,
-    SCIENTIFIC_TEAL_PINK_COLORS,
-    SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
+    NATURE_NPG_CONTINUOUS_CMAP,
+    NATURE_NPG_COLORS,
     default_categorical_palette,
     default_plot_formats,
 )
@@ -235,20 +235,20 @@ class PlotStyleConfig:
     show_grid: bool = DEFAULT_PLOT_RENDERING["show_grid"]
     transparent_background: bool = DEFAULT_PLOT_RENDERING["transparent_background"]
     use_minor_ticks: bool = DEFAULT_PLOT_RENDERING["use_minor_ticks"]
-    spine_color: str = SCIENTIFIC_TEAL_PINK_COLORS["spine_color"]
-    grid_color: str = SCIENTIFIC_TEAL_PINK_COLORS["grid_color"]
-    mean_line_color: str = SCIENTIFIC_TEAL_PINK_COLORS["mean_line_color"]
-    band_color: str = SCIENTIFIC_TEAL_PINK_COLORS["band_color"]
-    protein_color: str = SCIENTIFIC_TEAL_PINK_COLORS["protein_color"]
-    ligand_color: str = SCIENTIFIC_TEAL_PINK_COLORS["ligand_color"]
-    distance_color: str = SCIENTIFIC_TEAL_PINK_COLORS["distance_color"]
-    temperature_color: str = SCIENTIFIC_TEAL_PINK_COLORS["temperature_color"]
-    density_color: str = SCIENTIFIC_TEAL_PINK_COLORS["density_color"]
-    potential_energy_color: str = SCIENTIFIC_TEAL_PINK_COLORS["potential_energy_color"]
-    total_energy_color: str = SCIENTIFIC_TEAL_PINK_COLORS["total_energy_color"]
-    bar_color: str = SCIENTIFIC_TEAL_PINK_COLORS["bar_color"]
-    accent_color: str = SCIENTIFIC_TEAL_PINK_COLORS["accent_color"]
-    cmap_continuous: str = SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP
+    spine_color: str = NATURE_NPG_COLORS["spine_color"]
+    grid_color: str = NATURE_NPG_COLORS["grid_color"]
+    mean_line_color: str = NATURE_NPG_COLORS["mean_line_color"]
+    band_color: str = NATURE_NPG_COLORS["band_color"]
+    protein_color: str = NATURE_NPG_COLORS["protein_color"]
+    ligand_color: str = NATURE_NPG_COLORS["ligand_color"]
+    distance_color: str = NATURE_NPG_COLORS["distance_color"]
+    temperature_color: str = NATURE_NPG_COLORS["temperature_color"]
+    density_color: str = NATURE_NPG_COLORS["density_color"]
+    potential_energy_color: str = NATURE_NPG_COLORS["potential_energy_color"]
+    total_energy_color: str = NATURE_NPG_COLORS["total_energy_color"]
+    bar_color: str = NATURE_NPG_COLORS["bar_color"]
+    accent_color: str = NATURE_NPG_COLORS["accent_color"]
+    cmap_continuous: str = NATURE_NPG_CONTINUOUS_CMAP
     categorical_palette: list[str] = field(default_factory=default_categorical_palette)
 
 
