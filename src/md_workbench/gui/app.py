@@ -62,6 +62,7 @@ class App(tk.Tk):
             default_font = tkfont.nametofont("TkDefaultFont")
             families = set(tkfont.families())
             for family in [
+                "Arial",
                 "Microsoft YaHei UI",
                 "Microsoft YaHei",
                 "PingFang SC",

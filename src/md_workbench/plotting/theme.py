@@ -14,6 +14,7 @@ from matplotlib.ticker import AutoMinorLocator
 from ..config import PlotStyleConfig
 from ..config.plot_style_defaults import (
     AXES_TEXT_COLOR,
+    NATURE_NPG_CONTINUOUS_CMAP,
     SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP as MDW_CONTINUOUS_CMAP,
     SCIENTIFIC_TEAL_PINK_DIVERGING_CMAP as MDW_DIVERGING_CMAP,
 )
@@ -40,9 +41,9 @@ def contrast_text_color(color, style: PlotStyleConfig) -> str:
     return "#FFFFFF" if luminance < 0.52 else AXES_TEXT_COLOR
 
 
-def _continuous_colormap(style: PlotStyleConfig) -> LinearSegmentedColormap:
+def _continuous_colormap(style: PlotStyleConfig, name: str = MDW_CONTINUOUS_CMAP) -> LinearSegmentedColormap:
     return LinearSegmentedColormap.from_list(
-        MDW_CONTINUOUS_CMAP,
+        name,
         [
             "#FFFFFF",
             style.band_color,
@@ -68,7 +69,9 @@ def resolve_colormap(cmap, style: PlotStyleConfig, *, diverging: bool = False):
     if isinstance(cmap, str):
         name = cmap.strip()
         if name == MDW_CONTINUOUS_CMAP:
-            return _continuous_colormap(style)
+            return _continuous_colormap(style, name)
+        if name == NATURE_NPG_CONTINUOUS_CMAP:
+            return _continuous_colormap(style, name)
         if name == MDW_DIVERGING_CMAP:
             return _diverging_colormap(style)
         if name:
@@ -79,13 +82,10 @@ def resolve_colormap(cmap, style: PlotStyleConfig, *, diverging: bool = False):
 
 
 def _sans_serif_stack(style: PlotStyleConfig) -> list[str]:
-    candidates = [
-        style.font_family,
-        "Arial",
-        "Helvetica",
-        "Liberation Sans",
-        "DejaVu Sans",
-    ]
+    primary = str(style.font_family).strip()
+    if primary:
+        return [primary]
+    candidates = ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"]
     ordered = []
     for item in candidates:
         clean = str(item).strip()

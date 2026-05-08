@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-DEFAULT_PLOT_STYLE_PRESET = "palette1"
+DEFAULT_PLOT_STYLE_PRESET = "nature"
 CUSTOM_PLOT_STYLE_PRESET = "custom"
 PLOT_STYLE_PRESET_CHOICES = ("palette1", "palette2", "zero", "nature", CUSTOM_PLOT_STYLE_PRESET)
 AXES_TEXT_COLOR = "#000000"
@@ -9,7 +9,7 @@ DEFAULT_PLOT_FORMATS = ("png", "svg")
 
 DEFAULT_PLOT_RENDERING = {
     "dpi": 600,
-    "font_family": "DejaVu Sans",
+    "font_family": "Arial",
     "title_size": 10.6,
     "label_size": 9.2,
     "tick_size": 8.2,
@@ -72,18 +72,18 @@ ZERO_BLUE_CYAN_PINK_COLORS = {
     "accent_color": "#E66AA3",
 }
 
-NATURE_RED_BLACK_COLORS = {
+NATURE_NPG_COLORS = {
     "spine_color": AXES_TEXT_COLOR,
-    "grid_color": "#D9D9D9",
+    "grid_color": "#D9DDE8",
     "mean_line_color": "#E64B35",
-    "band_color": "#FCE5E0",
-    "protein_color": "#000000",
+    "band_color": "#E6F4F1",
+    "protein_color": "#4DBBD5",
     "ligand_color": "#E64B35",
-    "distance_color": "#DC0000",
-    "temperature_color": "#4D4D4D",
-    "density_color": "#7F7F7F",
-    "potential_energy_color": "#000000",
-    "total_energy_color": "#DC0000",
+    "distance_color": "#00A087",
+    "temperature_color": "#4DBBD5",
+    "density_color": "#8491B4",
+    "potential_energy_color": "#3C5488",
+    "total_energy_color": "#E64B35",
     "bar_color": "#E64B35",
     "accent_color": "#DC0000",
 }
@@ -127,21 +127,22 @@ ZERO_BLUE_CYAN_PINK_CATEGORICAL_PALETTE = (
     "#1F8A9E",
 )
 
-NATURE_RED_BLACK_CATEGORICAL_PALETTE = (
-    "#000000",
+NATURE_NPG_CATEGORICAL_PALETTE = (
     "#E64B35",
-    "#4D4D4D",
+    "#4DBBD5",
+    "#00A087",
+    "#3C5488",
+    "#F39B7F",
+    "#8491B4",
+    "#91D1C2",
     "#DC0000",
-    "#7F7F7F",
-    "#B22222",
-    "#969696",
-    "#8B0000",
-    "#C76450",
-    "#2B2B2B",
+    "#7E6148",
+    "#B09C85",
 )
 
 SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP = "mdw_teal_purple"
 SCIENTIFIC_TEAL_PINK_DIVERGING_CMAP = "mdw_teal_pink_diverging"
+NATURE_NPG_CONTINUOUS_CMAP = "mdw_nature_npg"
 
 PLOT_STYLE_PRESETS = {
     "palette1": {
@@ -160,9 +161,9 @@ PLOT_STYLE_PRESETS = {
         "cmap_continuous": SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
     },
     "nature": {
-        "colors": NATURE_RED_BLACK_COLORS,
-        "categorical_palette": NATURE_RED_BLACK_CATEGORICAL_PALETTE,
-        "cmap_continuous": SCIENTIFIC_TEAL_PINK_CONTINUOUS_CMAP,
+        "colors": NATURE_NPG_COLORS,
+        "categorical_palette": NATURE_NPG_CATEGORICAL_PALETTE,
+        "cmap_continuous": NATURE_NPG_CONTINUOUS_CMAP,
     },
 }
 
@@ -174,6 +175,10 @@ PLOT_STYLE_PRESET_ALIASES = {
     "zero_color": "zero",
     "zero_colours": "zero",
     "zero_colors": "zero",
+    "nature_npg": "nature",
+    "nature_classic": "nature",
+    "npg": "nature",
+    "npg_nrc": "nature",
     "nature_red_black": "nature",
     "npg_red_black": "nature",
     "nature_style": "nature",
@@ -185,7 +190,7 @@ def default_plot_formats() -> list[str]:
 
 
 def default_categorical_palette() -> list[str]:
-    return list(SCIENTIFIC_TEAL_PINK_CATEGORICAL_PALETTE)
+    return list(NATURE_NPG_CATEGORICAL_PALETTE)
 
 
 def canonical_plot_style_palette(name: str) -> str:
