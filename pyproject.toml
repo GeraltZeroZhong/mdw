@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdw-zhong"
+version = "0.1.0"
+description = "Internal molecular dynamics workflow utilities for MD Workbench."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "GeraltZeroZhong" }
+]
+keywords = [
+  "molecular-dynamics",
+  "openmm",
+  "docking",
+  "mmgbsa",
+  "workflow"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Chemistry"
+]
+dependencies = []
+
+[project.optional-dependencies]
+release = [
+  "build>=1.2",
+  "twine>=5"
+]
+
+[project.urls]
+Repository = "https://github.com/GeraltZeroZhong/mdw"
+
+[project.scripts]
+mdw = "md_workbench.cli:main"
+mdw-gui = "md_workbench.cli:gui_entry"
+mdw-run = "md_workbench.cli:run_entry"
+mdw-next-replica = "md_workbench.cli:next_replica_entry"
+mdw-existing-results = "md_workbench.cli:existing_results_entry"
+mdw-plot = "md_workbench.cli:plot_entry"
+mdw-report = "md_workbench.cli:report_entry"
+mdw-mmgbsa = "md_workbench.cli:mmgbsa_entry"
+mdw-parse-mmgbsa = "md_workbench.cli:parse_mmgbsa_entry"
+mdw-self-check = "md_workbench.cli:self_check_entry"
+mdw-init-config = "md_workbench.cli:init_config_entry"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
