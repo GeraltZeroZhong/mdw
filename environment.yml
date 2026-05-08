@@ -22,3 +22,4 @@ dependencies:
   - openmmforcefields=0.15.1
   - meeko=0.7.1
   - gemmi
+  - pymol-open-source
