@@ -208,6 +208,8 @@ def _try_export_amber_artifacts(
         import parmed as pmd
         from parmed.tools.actions import changeRadii
         import mdtraj as md
+        from mdtraj.formats import NetCDFTrajectoryFile
+        from mdtraj.utils import in_units_of
     except Exception as exc:
         return {}, f"Amber artifact export prerequisites are unavailable: {exc}"
 
@@ -218,6 +220,29 @@ def _try_export_amber_artifacts(
         parm = pmd.load_file(str(prmtop_path))
         changeRadii(parm, radii_set).execute()
         parm.save(str(prmtop_path), overwrite=True)
+
+    def _save_netcdf_streaming(dcd_path: Path, top_path: Path, nc_path: Path, chunk_size: int = 25) -> None:
+        wrote_frames = False
+        with NetCDFTrajectoryFile(str(nc_path), "w", force_overwrite=True) as handle:
+            for chunk in md.iterload(str(dcd_path), top=str(top_path), chunk=chunk_size):
+                chunk._check_valid_unitcell()
+                handle.write(
+                    coordinates=in_units_of(
+                        chunk.xyz,
+                        md.Trajectory._distance_unit,
+                        NetCDFTrajectoryFile.distance_unit,
+                    ),
+                    time=chunk.time,
+                    cell_lengths=in_units_of(
+                        chunk.unitcell_lengths,
+                        md.Trajectory._distance_unit,
+                        handle.distance_unit,
+                    ),
+                    cell_angles=chunk.unitcell_angles,
+                )
+                wrote_frames = True
+        if not wrote_frames:
+            raise ValueError(f"No frames were available to export from {dcd_path}")
 
     try:
         dry_structure = pmd.openmm.load_topology(dry_modeller.topology, dry_system, xyz=dry_modeller.positions)
@@ -249,8 +274,7 @@ def _try_export_amber_artifacts(
         dcd_path = out_dir / "trajectory.dcd"
         top_path = out_dir / "system_solvated.pdb"
         if dcd_path.exists() and top_path.exists():
-            traj = md.load(str(dcd_path), top=str(top_path))
-            traj.save_netcdf(str(out_dir / "complex.nc"))
+            _save_netcdf_streaming(dcd_path, top_path, out_dir / "complex.nc")
 
         for name in [
             "complex.prmtop", "complex_solvated.prmtop", "receptor.prmtop", "ligand.prmtop", "complex.nc"
