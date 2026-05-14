@@ -53,7 +53,9 @@ def _bind_existing_analysis_inputs(cfg: WorkflowConfig) -> None:
         cfg.basic.ligand_sdf,
         cfg.docking.extracted_pose_sdf,
         cfg.run.ligand_sdf,
+        cfg.docking.ligand_output_pdb,
         cfg.docking.ligand_output_sdf,
+        cfg.docking.ligand_pdb_input,
         cfg.docking.ligand_sdf_input,
     ]
     for candidate in ligand_candidates:

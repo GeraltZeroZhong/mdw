@@ -12,7 +12,9 @@ def _pick_ligand_sdf(cfg: WorkflowConfig) -> str:
     candidates = [
         cfg.run.ligand_sdf,
         cfg.docking.extracted_pose_sdf,
+        cfg.docking.ligand_output_pdb,
         cfg.docking.ligand_output_sdf,
+        cfg.docking.ligand_pdb_input,
         cfg.docking.ligand_sdf_input,
         cfg.basic.ligand_sdf,
     ]

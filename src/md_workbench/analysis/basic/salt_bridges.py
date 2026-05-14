@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 import numpy as np
 import mdtraj as md
 from rdkit import Chem
@@ -9,9 +10,12 @@ from ...core import atom_label, residue_label
 
 
 def load_ligand_formal_charge_atoms(sdf_path, ligand_mdtraj_atom_count):
+    if not str(sdf_path).strip() or Path(sdf_path).suffix.lower() not in {".sdf", ".sd"}:
+        return [], []
     mol = Chem.MolFromMolFile(str(sdf_path), removeHs=False)
     if mol is None:
-        raise ValueError(f"RDKit 无法读取配体 SDF: {sdf_path}")
+        print(f"警告：RDKit 无法读取配体 SDF，将跳过形式电荷盐桥分析: {sdf_path}")
+        return [], []
     if mol.GetNumAtoms() != ligand_mdtraj_atom_count:
         print("警告：配体 SDF 原子数与轨迹不一致，将跳过形式电荷盐桥分析。")
         return [], []
@@ -25,9 +29,8 @@ def load_ligand_formal_charge_atoms(sdf_path, ligand_mdtraj_atom_count):
     return positive, negative
 
 
-def compute_salt_bridges(traj, ligand_residue, ligand_sdf_path, salt_bridge_cutoff_nm: float):
-    ligand_atoms = list(ligand_residue.atoms)
-    ligand_atom_indices = [atom.index for atom in ligand_atoms]
+def compute_salt_bridges(traj, ligand_atom_indices, ligand_sdf_path, salt_bridge_cutoff_nm: float):
+    ligand_atom_indices = [int(idx) for idx in ligand_atom_indices]
     ligand_positive_local, ligand_negative_local = load_ligand_formal_charge_atoms(ligand_sdf_path, len(ligand_atom_indices))
     if not ligand_positive_local and not ligand_negative_local:
         return [], [], {}, {}

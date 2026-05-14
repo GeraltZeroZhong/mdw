@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from ..config import DockingConfig, PrepConfig
-from ..prep.ligand import extract_pose1, prepare_ligand_from_sdf, smiles_to_sdf, write_docking_box_config
+from ..prep.ligand import extract_pose1, prepare_ligand_from_pdb, prepare_ligand_from_sdf, smiles_to_sdf, write_docking_box_config
 from ..prep.receptor import assess_receptor_for_preprocess, infer_search_space_from_pdb, fix_receptor
 
 
@@ -24,7 +24,9 @@ def _prepare_ligand(cfg: DockingConfig) -> str:
         return smiles_to_sdf(cfg.ligand_smiles, cfg.ligand_output_sdf)
     if mode == "sdf":
         return prepare_ligand_from_sdf(cfg.ligand_sdf_input, cfg.ligand_output_sdf)
-    raise ValueError("ligand_input_mode must be either 'smiles' or 'sdf'.")
+    if mode == "pdb":
+        return prepare_ligand_from_pdb(cfg.ligand_pdb_input, cfg.ligand_output_pdb)
+    raise ValueError("ligand_input_mode must be one of: smiles, sdf, pdb.")
 
 
 def _complete_user_box(cfg: DockingConfig) -> bool:
@@ -101,6 +103,10 @@ def run_prep_workflow(cfg: PrepConfig, docking_cfg: DockingConfig | None = None)
     run_fix, reasons = _should_preprocess(cfg)
     outputs["preprocess_recommended_reasons"] = reasons
     outputs["preprocess_applied"] = run_fix
+    docking_mode = str(docking_cfg.docking_mode).strip().lower()
+    ligand_mode = str(docking_cfg.ligand_input_mode).strip().lower()
+    if ligand_mode == "pdb" and docking_mode != "skip":
+        raise ValueError("ligand_input_mode='pdb' supports docking_mode='skip' only. Peptide/PDB docking is not implemented.")
 
     if run_fix:
         receptor_path = fix_receptor(
@@ -123,7 +129,6 @@ def run_prep_workflow(cfg: PrepConfig, docking_cfg: DockingConfig | None = None)
     ligand_path = _prepare_ligand(docking_cfg)
     outputs["ligand"] = ligand_path
 
-    docking_mode = str(docking_cfg.docking_mode).strip().lower()
     if docking_mode == "auto":
         search_space = _resolve_search_space(cfg.receptor_input, docking_cfg)
         outputs["search_space"] = search_space

@@ -11,7 +11,14 @@ import numpy as np
 
 from ..config import WorkflowConfig
 from ..config.plot_style_defaults import apply_plot_style_palette
-from ..core import ensure_project_layout, find_ligand_residue, normalize_workflow_paths, organize_outputs, read_dict_csv
+from ..core import (
+    ensure_project_layout,
+    find_ligand_residues,
+    ligand_heavy_atom_indices_from_residues,
+    normalize_workflow_paths,
+    organize_outputs,
+    read_dict_csv,
+)
 from ..core.progress import ProgressCallback, emit_progress
 from ..plotting.basic_combined import _key_contact_axis_cap, _key_contact_out_base, plot_key_contact_distance_figure
 from ..plotting.bars import ranked_distance_lollipop, ranked_lollipop
@@ -833,8 +840,8 @@ def _snapshot_entries_from_existing_pdbs(snapshot_root: Path, cfg: WorkflowConfi
             continue
         frame = md.load_pdb(str(pdb_path))
         protein_ca = frame.topology.select("protein and name CA")
-        ligand_residue = find_ligand_residue(frame.topology)
-        ligand_heavy = [atom.index for atom in ligand_residue.atoms if atom.element is not None and atom.element.symbol != "H"]
+        ligand_residues = find_ligand_residues(frame.topology)
+        ligand_heavy = ligand_heavy_atom_indices_from_residues(ligand_residues)
         cluster_id = int(float(row["cluster"]))
         entries.append(
             {

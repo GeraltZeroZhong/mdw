@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 import re
 import subprocess
@@ -17,7 +18,7 @@ from openmm.unit import bar, kelvin, molar, nanometer, nanometers, picosecond, p
 from ..config import RunConfig
 from ..core import clear_replica_generated_outputs, ensure_dir, replica_dir, write_replica_status
 from ..core.progress import ProgressCallback, emit_progress
-from .system_builder import build_modeller_and_forcefield
+from .system_builder import LigandBuildInfo, build_modeller_and_forcefield, tag_ligand_residues_for_output
 
 
 ReplicaStepCallback = Callable[[int, int, str, int | None], None]
@@ -160,6 +161,10 @@ def _create_cuda_simulation_or_raise(topology, system, cfg: RunConfig, seed: int
 def save_pdb(topology, positions, out_path: Path):
     with open(out_path, "w", encoding="utf-8") as handle:
         PDBFile.writeFile(topology, positions, handle)
+
+
+def _copy_modeller(modeller_template):
+    return modeller_template.__class__(deepcopy(modeller_template.topology), deepcopy(modeller_template.positions))
 
 
 def _attach_production_reporters(simulation: Simulation, out_dir: Path, cfg: RunConfig) -> None:
@@ -335,6 +340,7 @@ def run_single_replica(
     cfg: RunConfig,
     modeller_template,
     forcefield,
+    ligand_info: LigandBuildInfo,
     platform,
     properties,
     progress_callback: ReplicaStepCallback | None = None,
@@ -346,23 +352,26 @@ def run_single_replica(
     if progress_callback is not None:
         progress_callback(0, max(total_steps, 1), "Preparing solvated system and force field", None)
 
-    dry_modeller = modeller_template.__class__(modeller_template.topology, modeller_template.positions)
-    save_pdb(dry_modeller.topology, dry_modeller.positions, out_dir / "complex_from_components.pdb")
+    dry_modeller = _copy_modeller(modeller_template)
 
     dry_system = forcefield.createSystem(
         dry_modeller.topology,
         nonbondedMethod=NoCutoff,
         constraints=HBonds,
     )
+    dry_system_export = forcefield.createSystem(
+        dry_modeller.topology,
+        nonbondedMethod=NoCutoff,
+        constraints=None,
+    )
 
-    modeller = modeller_template.__class__(modeller_template.topology, modeller_template.positions)
+    modeller = _copy_modeller(modeller_template)
     modeller.addSolvent(
         forcefield,
         model="tip3p",
         padding=cfg.solvent_padding_nm * nanometers,
         ionicStrength=cfg.ionic_strength_molar * molar,
     )
-    save_pdb(modeller.topology, modeller.positions, out_dir / "system_solvated.pdb")
 
     system = forcefield.createSystem(
         modeller.topology,
@@ -370,6 +379,18 @@ def run_single_replica(
         nonbondedCutoff=1.0 * nanometer,
         constraints=HBonds,
     )
+    solvated_system_export = forcefield.createSystem(
+        modeller.topology,
+        nonbondedMethod=PME,
+        nonbondedCutoff=1.0 * nanometer,
+        constraints=None,
+        rigidWater=False,
+    )
+
+    tag_ligand_residues_for_output(dry_modeller.topology, ligand_info)
+    tag_ligand_residues_for_output(modeller.topology, ligand_info)
+    save_pdb(dry_modeller.topology, dry_modeller.positions, out_dir / "complex_from_components.pdb")
+    save_pdb(modeller.topology, modeller.positions, out_dir / "system_solvated.pdb")
 
     barostat = MonteCarloBarostat(cfg.pressure_bar * bar, cfg.temperature_kelvin * kelvin, 25)
     try:
@@ -436,20 +457,6 @@ def run_single_replica(
     save_pdb(simulation.topology, final_state.getPositions(), out_dir / "final_frame.pdb")
     if progress_callback is not None:
         progress_callback(max(total_steps, 1), max(total_steps, 1), "Exporting final structures and Amber artifacts", None)
-    # Export a second set of Amber-oriented systems without constrained H-bonds
-    # or rigid waters so ParmEd can emit complete bond parameters for prmtop files.
-    dry_system_export = forcefield.createSystem(
-        dry_modeller.topology,
-        nonbondedMethod=NoCutoff,
-        constraints=None,
-    )
-    solvated_system_export = forcefield.createSystem(
-        modeller.topology,
-        nonbondedMethod=PME,
-        nonbondedCutoff=1.0 * nanometer,
-        constraints=None,
-        rigidWater=False,
-    )
     amber_artifacts, amber_artifact_warning = _try_export_amber_artifacts(
         out_dir,
         dry_modeller,
@@ -504,7 +511,7 @@ def _emit_replica_progress(
 def run_md_workflow(cfg: RunConfig, progress_callback: ReplicaProgressCallback | None = None) -> list[dict[str, object]]:
     total_replicas = max(int(cfg.n_replicas), 1)
     _emit_replica_progress(progress_callback, 0, total_replicas, "Building the solvated MD system")
-    modeller, forcefield = build_modeller_and_forcefield(cfg.protein_pdb, cfg.ligand_sdf)
+    modeller, forcefield, ligand_info = build_modeller_and_forcefield(cfg.protein_pdb, cfg.ligand_sdf)
     _emit_replica_progress(progress_callback, 0, total_replicas, "Initializing the OpenMM CUDA platform")
     platform, properties = get_cuda_platform(cfg.use_mixed_precision)
     outputs = []
@@ -537,6 +544,7 @@ def run_md_workflow(cfg: RunConfig, progress_callback: ReplicaProgressCallback |
             cfg,
             modeller,
             forcefield,
+            ligand_info,
             platform,
             properties,
             progress_callback=_step_progress,
@@ -565,7 +573,7 @@ def run_single_replica_workflow(
         raise ValueError(f"Replica id {replica_id} is outside the configured target range 1..{total_replicas}.")
 
     _emit_replica_progress(progress_callback, 0, 1, "Building the solvated MD system")
-    modeller, forcefield = build_modeller_and_forcefield(cfg.protein_pdb, cfg.ligand_sdf)
+    modeller, forcefield, ligand_info = build_modeller_and_forcefield(cfg.protein_pdb, cfg.ligand_sdf)
     _emit_replica_progress(progress_callback, 0, 1, "Initializing the OpenMM CUDA platform")
     platform, properties = get_cuda_platform(cfg.use_mixed_precision)
     replica_total_steps = max(int(cfg.equil_steps), 0) + max(int(cfg.production_steps), 0)
@@ -596,6 +604,7 @@ def run_single_replica_workflow(
         cfg,
         modeller,
         forcefield,
+        ligand_info,
         platform,
         properties,
         progress_callback=_step_progress,

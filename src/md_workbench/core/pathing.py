@@ -46,7 +46,7 @@ def make_config_portable(cfg: WorkflowConfig) -> WorkflowConfig:
 
     prep_fields = ["receptor_input", "receptor_output"]
     docking_fields = [
-        "ligand_sdf_input", "ligand_output_sdf", "receptor_pdbqt", "receptor_json", "ligand_pdbqt",
+        "ligand_sdf_input", "ligand_pdb_input", "ligand_output_sdf", "ligand_output_pdb", "receptor_pdbqt", "receptor_json", "ligand_pdbqt",
         "docking_pdbqt", "docking_sdf", "docking_log", "extracted_pose_sdf", "extracted_pose_pdb",
         "external_docking_sdf", "docking_box_config",
     ]
@@ -87,13 +87,18 @@ def infer_run_input_paths(cfg: WorkflowConfig) -> tuple[str, str]:
     if not ligand:
         candidates: list[str] = []
         docking_mode = str(cfg.docking.docking_mode).strip().lower()
+        ligand_mode = str(cfg.docking.ligand_input_mode).strip().lower()
         if cfg.do_prep and docking_mode in {"auto", "external"}:
             candidates.append(str(cfg.docking.extracted_pose_sdf).strip())
         if cfg.do_prep:
+            if ligand_mode == "pdb" and docking_mode == "skip":
+                candidates.append(str(cfg.docking.ligand_output_pdb).strip())
             candidates.append(str(cfg.docking.ligand_output_sdf).strip())
         else:
-            if str(cfg.docking.ligand_input_mode).strip().lower() == "sdf":
+            if ligand_mode == "sdf":
                 candidates.append(str(cfg.docking.ligand_sdf_input).strip())
+            elif ligand_mode == "pdb":
+                candidates.append(str(cfg.docking.ligand_pdb_input).strip())
             else:
                 candidates.append(str(cfg.docking.ligand_output_sdf).strip())
         for cand in candidates:
@@ -109,7 +114,7 @@ def normalize_workflow_paths(cfg: WorkflowConfig) -> WorkflowConfig:
 
     prep_fields = ["receptor_input", "receptor_output"]
     docking_fields = [
-        "ligand_sdf_input", "ligand_output_sdf", "receptor_pdbqt", "receptor_json", "ligand_pdbqt",
+        "ligand_sdf_input", "ligand_pdb_input", "ligand_output_sdf", "ligand_output_pdb", "receptor_pdbqt", "receptor_json", "ligand_pdbqt",
         "docking_pdbqt", "docking_sdf", "docking_log", "extracted_pose_sdf", "extracted_pose_pdb",
         "external_docking_sdf", "docking_box_config",
     ]

@@ -9,7 +9,7 @@ import mdtraj as md
 import numpy as np
 from mdtraj.formats import DCDTrajectoryFile
 
-from ...core import atom_label, find_ligand_residue, residue_label
+from ...core import atom_label, find_ligand_residues, ligand_residue_summary, residue_label
 
 _FRAME_CHUNK_SIZE = 25
 _TRIPLET_BATCH_SIZE = 256
@@ -27,7 +27,8 @@ class _TripletMetadata:
 
 @dataclass
 class _TopologyIndex:
-    ligand_residue: object
+    ligand_residues: list[object]
+    ligand_residue_label: str
     ligand_interaction_atom_indices: np.ndarray
     protein_interaction_atom_indices: np.ndarray
     water_acceptor_indices: np.ndarray
@@ -59,7 +60,8 @@ def _iter_donor_pairs(topology) -> list[tuple[int, int]]:
 
 
 def _build_topology_index(topology) -> _TopologyIndex:
-    ligand_residue = find_ligand_residue(topology)
+    ligand_residues = find_ligand_residues(topology)
+    ligand_residue_set = set(ligand_residues)
     ligand_acceptor_set: set[int] = set()
     protein_acceptor_set: set[int] = set()
     water_acceptor_indices: list[int] = []
@@ -73,7 +75,7 @@ def _build_topology_index(topology) -> _TopologyIndex:
             water_acceptor_indices.append(atom.index)
             water_oxygen_to_residue[atom.index] = atom.residue.index
             water_oxygen_by_residue[atom.residue.index] = atom.index
-        elif atom.residue == ligand_residue:
+        elif atom.residue in ligand_residue_set:
             ligand_acceptor_set.add(atom.index)
         elif atom.residue.is_protein:
             protein_acceptor_set.add(atom.index)
@@ -88,7 +90,7 @@ def _build_topology_index(topology) -> _TopologyIndex:
         donor_atom = topology.atom(donor_idx)
         if donor_atom.residue.is_water:
             water_donor_pairs_by_residue[donor_atom.residue.index].append((donor_idx, hydrogen_idx))
-        elif donor_atom.residue == ligand_residue:
+        elif donor_atom.residue in ligand_residue_set:
             ligand_donor_pairs_by_atom[donor_idx].append((donor_idx, hydrogen_idx))
             ligand_donor_atoms.add(donor_idx)
         elif donor_atom.residue.is_protein:
@@ -98,7 +100,8 @@ def _build_topology_index(topology) -> _TopologyIndex:
     ligand_interaction_atom_indices = np.asarray(sorted(ligand_acceptor_set | ligand_donor_atoms), dtype=int)
     protein_interaction_atom_indices = np.asarray(sorted(protein_acceptor_set | protein_donor_atoms), dtype=int)
     return _TopologyIndex(
-        ligand_residue=ligand_residue,
+        ligand_residues=list(ligand_residues),
+        ligand_residue_label=ligand_residue_summary(ligand_residues),
         ligand_interaction_atom_indices=ligand_interaction_atom_indices,
         protein_interaction_atom_indices=protein_interaction_atom_indices,
         water_acceptor_indices=np.asarray(sorted(water_acceptor_indices), dtype=int),
@@ -440,7 +443,7 @@ def analyze_waterbridge_trajectory(
         hbond_angle_cutoff_deg,
     )
     return {
-        "ligand_residue": topology_index.ligand_residue,
+        "ligand_residue": topology_index.ligand_residue_label,
         "n_frames": n_frames,
         "protein_triplets": protein_rows,
         "ligand_triplets": ligand_rows,

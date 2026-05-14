@@ -39,9 +39,8 @@ def _donor_hydrogen_pairs(topology) -> list[tuple[int, int]]:
         elif symbol1 in _HBOND_DONOR_ELEMENTS and symbol0 == "H":
             pairs.append((int(atom1.index), int(atom0.index)))
     if not saw_bond:
-        raise ValueError(
-            "No bonds found in topology. Try using traj._topology.create_standard_bonds() before H-bond analysis."
-        )
+        print("警告：拓扑中没有键连接信息，将跳过氢键占有率分析。")
+        return []
     return pairs
 
 

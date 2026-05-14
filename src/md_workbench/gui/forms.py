@@ -35,6 +35,7 @@ REQUIRED_FIELDS = {
 GENERATED_FIELDS = {
     "receptor_output",
     "ligand_output_sdf",
+    "ligand_output_pdb",
     "receptor_pdbqt",
     "receptor_json",
     "ligand_pdbqt",
@@ -52,12 +53,14 @@ OPTIONAL_OVERRIDE_FIELDS = {
 CONDITIONAL_REQUIRED_FIELDS = {
     "ligand_smiles",
     "ligand_sdf_input",
+    "ligand_pdb_input",
     "external_docking_sdf",
 }
 
 INPUT_FILE_FIELDS = {
     "receptor_input",
     "ligand_sdf_input",
+    "ligand_pdb_input",
     "external_docking_sdf",
     "protein_pdb",
     "ligand_sdf",
@@ -79,6 +82,7 @@ INPUT_FILE_FIELDS = {
 OUTPUT_FILE_FIELDS = {
     "receptor_output",
     "ligand_output_sdf",
+    "ligand_output_pdb",
     "receptor_pdbqt",
     "receptor_json",
     "ligand_pdbqt",
@@ -93,7 +97,7 @@ OUTPUT_FILE_FIELDS = {
 ENUM_FIELDS = {
     "missing_residue_policy": ["internal", "all", "none"],
     "preprocess_mode": ["auto", "always", "never"],
-    "ligand_input_mode": ["smiles", "sdf"],
+    "ligand_input_mode": ["smiles", "sdf", "pdb"],
     "docking_mode": ["auto", "external", "skip"],
     "search_space_mode": ["auto", "manual"],
     "color_palette": list(PLOT_STYLE_PRESET_CHOICES),
@@ -106,7 +110,7 @@ BASIC_FIELD_GROUPS = {
         "receptor_input",
     },
     "docking": {
-        "ligand_input_mode", "ligand_smiles", "ligand_sdf_input",
+        "docking_mode", "ligand_input_mode", "ligand_smiles", "ligand_sdf_input", "ligand_pdb_input",
         "search_center_x", "search_center_y", "search_center_z",
     },
     "run": {
@@ -159,8 +163,10 @@ ADVANCED_FIELD_GROUPS = {
                 "ligand_input_mode",
                 "ligand_smiles",
                 "ligand_sdf_input",
+                "ligand_pdb_input",
                 "external_docking_sdf",
                 "ligand_output_sdf",
+                "ligand_output_pdb",
             ],
         },
         {
@@ -462,10 +468,15 @@ def _visible_fields(section_key: str, all_fields, mode: str, obj=None):
     visible = [field for field in all_fields if field.name in keep]
     if section_key == "docking" and obj is not None:
         ligand_mode = str(getattr(obj, "ligand_input_mode", "smiles")).strip().lower()
+        docking_mode = str(getattr(obj, "docking_mode", "auto")).strip().lower()
         if ligand_mode == "smiles":
-            visible = [field for field in visible if field.name != "ligand_sdf_input"]
+            visible = [field for field in visible if field.name not in {"ligand_sdf_input", "ligand_pdb_input"}]
         elif ligand_mode == "sdf":
-            visible = [field for field in visible if field.name != "ligand_smiles"]
+            visible = [field for field in visible if field.name not in {"ligand_smiles", "ligand_pdb_input"}]
+        elif ligand_mode == "pdb":
+            visible = [field for field in visible if field.name not in {"ligand_smiles", "ligand_sdf_input"}]
+        if ligand_mode == "pdb" or docking_mode == "skip":
+            visible = [field for field in visible if field.name not in {"search_center_x", "search_center_y", "search_center_z"}]
     return visible
 
 
@@ -493,16 +504,22 @@ def _grouped_visible_fields(section_key: str, visible_fields, mode: str):
 
 
 def _field_status(section_key: str, field_name: str, obj, mode: str = "advanced") -> str:
+    ligand_mode = str(getattr(obj, "ligand_input_mode", "smiles")).strip().lower()
+    docking_mode = str(getattr(obj, "docking_mode", "auto")).strip().lower()
+    if field_name in {"search_center_x", "search_center_y", "search_center_z"} and (ligand_mode == "pdb" or docking_mode == "skip"):
+        return "optional"
     if mode == "basic" and field_name in BASIC_REQUIRED_FIELDS:
         return "required"
     if field_name in REQUIRED_FIELDS:
         return "required"
     if field_name == "ligand_smiles":
-        return "conditional_required" if getattr(obj, "ligand_input_mode", "smiles") == "smiles" else "optional"
+        return "conditional_required" if ligand_mode == "smiles" else "optional"
     if field_name == "ligand_sdf_input":
-        return "conditional_required" if getattr(obj, "ligand_input_mode", "smiles") == "sdf" else "optional"
+        return "conditional_required" if ligand_mode == "sdf" else "optional"
+    if field_name == "ligand_pdb_input":
+        return "conditional_required" if ligand_mode == "pdb" else "optional"
     if field_name == "external_docking_sdf":
-        return "conditional_required" if getattr(obj, "docking_mode", "auto") == "external" else "optional"
+        return "conditional_required" if docking_mode == "external" else "optional"
     if field_name in {"search_center_x", "search_center_y", "search_center_z", "search_size_x", "search_size_y", "search_size_z"}:
         return "optional"
     if field_name in GENERATED_FIELDS:

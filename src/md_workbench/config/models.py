@@ -30,7 +30,9 @@ class DockingConfig:
     ligand_input_mode: str = "smiles"
     ligand_smiles: str = ""
     ligand_sdf_input: str = "inputs/ligand_input.sdf"
+    ligand_pdb_input: str = "inputs/ligand_input.pdb"
     ligand_output_sdf: str = "work/prep/prepared_ligand.sdf"
+    ligand_output_pdb: str = "work/prep/prepared_ligand.pdb"
 
     search_space_mode: str = "auto"
     search_center_x: float | None = None
@@ -280,7 +282,7 @@ class WorkflowConfig:
     do_prep: bool = True
     do_run_md: bool = True
     do_basic_analysis: bool = True
-    do_waterbridge_analysis: bool = True
+    do_waterbridge_analysis: bool = False
     do_advanced_analysis: bool = True
     do_mmgbsa_postprocess: bool = False
 

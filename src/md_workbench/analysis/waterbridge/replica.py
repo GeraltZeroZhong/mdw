@@ -48,7 +48,7 @@ def process_waterbridge_replica(
     except OSError as exc:
         raise ValueError(f"{Path(replica_dir).name}: 无法读取轨迹文件 {dcd}") from exc
     time_ns = get_time_ns_from_nframes(analysis["n_frames"], cfg.timestep_ps, cfg.dcd_interval_steps)
-    ligand_residue = analysis["ligand_residue"]
+    ligand_residue_label = str(analysis["ligand_residue"])
     protein_triplets = analysis["protein_triplets"]
     ligand_triplets = analysis["ligand_triplets"]
     residue_rows = analysis["residue_rows"]
@@ -81,7 +81,7 @@ def process_waterbridge_replica(
         "residue_rows": residue_rows,
         "summary": {
             "replica": Path(replica_dir).name,
-            "ligand_residue": f"chain{ligand_residue.chain.index}_{ligand_residue.name}{ligand_residue.resSeq}",
+            "ligand_residue": ligand_residue_label,
             "n_frames": int(analysis["n_frames"]),
             "mean_n_bridging_waters": float(np.mean(waterbridge_count)),
             "max_n_bridging_waters": int(np.max(waterbridge_count)),

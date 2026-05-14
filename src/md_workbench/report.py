@@ -418,7 +418,9 @@ def _generate_docking_pose_figure(
             workflow_cfg.docking.extracted_pose_pdb,
             workflow_cfg.docking.extracted_pose_sdf,
             workflow_cfg.docking.docking_sdf,
+            workflow_cfg.docking.ligand_output_pdb,
             workflow_cfg.docking.ligand_output_sdf,
+            workflow_cfg.docking.ligand_pdb_input,
             workflow_cfg.docking.ligand_sdf_input,
         ]
     )
