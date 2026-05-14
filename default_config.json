@@ -14,7 +14,9 @@
     "ligand_input_mode": "smiles",
     "ligand_smiles": "",
     "ligand_sdf_input": "inputs/ligand_input.sdf",
+    "ligand_pdb_input": "inputs/ligand_input.pdb",
     "ligand_output_sdf": "work/prep/prepared_ligand.sdf",
+    "ligand_output_pdb": "work/prep/prepared_ligand.pdb",
     "search_space_mode": "auto",
     "search_center_x": null,
     "search_center_y": null,
@@ -234,7 +236,7 @@
   "do_prep": true,
   "do_run_md": true,
   "do_basic_analysis": true,
-  "do_waterbridge_analysis": true,
+  "do_waterbridge_analysis": false,
   "do_advanced_analysis": true,
   "do_mmgbsa_postprocess": false
 }

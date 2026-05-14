@@ -4,7 +4,7 @@ import numpy as np
 import mdtraj as md
 
 from ...config import AdvancedAnalysisConfig
-from ...core import atom_label, find_ligand_residue, residue_label
+from ...core import atom_label, find_ligand_residues, ligand_heavy_atom_indices_from_residues, ligand_residue_summary
 
 
 def featurize_traj(traj, feature_pairs):
@@ -24,11 +24,8 @@ def pick_feature_atoms(trajectories, cfg: AdvancedAnalysisConfig):
     if not trajectories:
         raise ValueError("No trajectories were provided for feature selection.")
     first_traj = trajectories[0]
-    ligand_residue = find_ligand_residue(first_traj.topology)
-    ligand_heavy = np.asarray(
-        [atom.index for atom in ligand_residue.atoms if atom.element is not None and atom.element.symbol != "H"],
-        dtype=int,
-    )
+    ligand_residues = find_ligand_residues(first_traj.topology)
+    ligand_heavy = np.asarray(ligand_heavy_atom_indices_from_residues(ligand_residues), dtype=int)
     protein_ca = first_traj.topology.select("protein and name CA")
     if len(protein_ca) == 0:
         raise ValueError("未找到 protein Cα 原子。")
@@ -42,7 +39,7 @@ def pick_feature_atoms(trajectories, cfg: AdvancedAnalysisConfig):
     feature_pairs = [(int(ca_idx), int(lig_idx)) for ca_idx in pocket_ca for lig_idx in ligand_heavy]
     metadata = {
         "feature_type": "protein_ca_ligand_heavy_distances",
-        "ligand_residue": residue_label(ligand_residue),
+        "ligand_residue": ligand_residue_summary(ligand_residues),
         "n_ligand_heavy_atoms": int(len(ligand_heavy)),
         "n_pocket_ca_atoms": int(len(pocket_ca)),
         "pocket_ca_atom_indices": pocket_ca.tolist(),

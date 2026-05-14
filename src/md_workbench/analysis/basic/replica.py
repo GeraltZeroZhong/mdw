@@ -9,8 +9,11 @@ import numpy as np
 from ...config import BasicAnalysisConfig, PlotSelectionConfig, PlotStyleConfig
 from ...core import (
     check_input_file,
-    find_ligand_residue,
+    find_ligand_residues,
     get_time_ns_from_nframes,
+    ligand_atom_indices_from_residues,
+    ligand_heavy_atom_indices_from_residues,
+    ligand_residue_summary,
     require_nonempty_file,
     write_dict_csv,
     save_csv,
@@ -46,6 +49,19 @@ from .salt_bridges import compute_salt_bridges
 
 ReplicaStepCallback = Callable[[int, int, str], None]
 
+_COVALENT_RADII_NM = {
+    "B": 0.084,
+    "C": 0.076,
+    "N": 0.071,
+    "O": 0.066,
+    "F": 0.057,
+    "P": 0.107,
+    "S": 0.105,
+    "CL": 0.102,
+    "BR": 0.120,
+    "I": 0.139,
+}
+
 
 def _emit_replica_step(callback: ReplicaStepCallback | None, current: int, total: int, detail: str) -> None:
     if callback is None:
@@ -53,6 +69,33 @@ def _emit_replica_step(callback: ReplicaStepCallback | None, current: int, total
     safe_total = max(int(total), 1)
     safe_current = min(max(int(current), 0), safe_total)
     callback(safe_current, safe_total, detail)
+
+
+def _infer_ligand_bonds(traj_frame, ligand_heavy):
+    rel_by_atom = {int(atom_idx): rel_idx for rel_idx, atom_idx in enumerate(ligand_heavy)}
+    topo_pairs = []
+    for atom_a, atom_b in traj_frame.topology.bonds:
+        ia = int(atom_a.index)
+        ib = int(atom_b.index)
+        if ia in rel_by_atom and ib in rel_by_atom:
+            topo_pairs.append(sorted((int(rel_by_atom[ia]), int(rel_by_atom[ib]))))
+    if topo_pairs:
+        return [list(pair) for pair in sorted({tuple(pair) for pair in topo_pairs})]
+
+    coords = traj_frame.xyz[0, ligand_heavy, :]
+    atoms = [traj_frame.topology.atom(int(atom_idx)) for atom_idx in ligand_heavy]
+    inferred = []
+    for i in range(len(ligand_heavy)):
+        symbol_i = (atoms[i].element.symbol if atoms[i].element is not None else "C").upper()
+        radius_i = _COVALENT_RADII_NM.get(symbol_i, 0.077)
+        for j in range(i + 1, len(ligand_heavy)):
+            symbol_j = (atoms[j].element.symbol if atoms[j].element is not None else "C").upper()
+            radius_j = _COVALENT_RADII_NM.get(symbol_j, 0.077)
+            cutoff = 1.23 * (radius_i + radius_j)
+            distance = float(np.linalg.norm(coords[i] - coords[j]))
+            if 0.055 <= distance <= cutoff:
+                inferred.append([int(i), int(j)])
+    return inferred
 
 
 def _export_representative_snapshots(traj, protein_ca, ligand_heavy, out_dir: Path, replica_name: str, n_frames: int):
@@ -72,6 +115,7 @@ def _export_representative_snapshots(traj, protein_ca, ligand_heavy, out_dir: Pa
                 "pdb_path": str(pdb_path),
                 "protein_xyz": traj.xyz[frame, protein_ca, :],
                 "ligand_xyz": traj.xyz[frame, ligand_heavy, :],
+                "ligand_bonds": _infer_ligand_bonds(traj[frame], ligand_heavy),
             }
         )
     save_csv(snapshot_dir / "snapshot_manifest.csv", ["title", "pdb_path"], [[e["title"], e["pdb_path"]] for e in entries])
@@ -136,9 +180,9 @@ def process_replica(
         topology_frame = md.load_pdb(str(top_path))
     except OSError as exc:
         raise ValueError(f"{Path(replica_dir).name}: 无法读取拓扑文件 {top_path}") from exc
-    topology_ligand = find_ligand_residue(topology_frame.topology)
+    topology_ligands = find_ligand_residues(topology_frame.topology)
     solute_atom_indices = sorted(
-        set(map(int, topology_frame.topology.select("protein"))) | {int(atom.index) for atom in topology_ligand.atoms}
+        set(map(int, topology_frame.topology.select("protein"))) | set(ligand_atom_indices_from_residues(topology_ligands))
     )
     if not solute_atom_indices:
         raise ValueError(f"{replica_dir}: missing protein or ligand atoms")
@@ -146,9 +190,9 @@ def process_replica(
         raw_traj = md.load(str(traj_path), top=str(top_path), atom_indices=solute_atom_indices)
     except OSError as exc:
         raise ValueError(f"{Path(replica_dir).name}: 无法读取轨迹文件 {traj_path}") from exc
-    ligand_residue = find_ligand_residue(raw_traj.topology)
-    ligand_all = [atom.index for atom in ligand_residue.atoms]
-    ligand_heavy = [atom.index for atom in ligand_residue.atoms if atom.element is not None and atom.element.symbol != "H"]
+    ligand_residues = find_ligand_residues(raw_traj.topology)
+    ligand_all = ligand_atom_indices_from_residues(ligand_residues)
+    ligand_heavy = ligand_heavy_atom_indices_from_residues(ligand_residues)
     protein_bb = raw_traj.topology.select("protein and backbone")
     protein_ca = raw_traj.topology.select("protein and name CA")
     protein_all = raw_traj.topology.select("protein")
@@ -156,7 +200,7 @@ def process_replica(
         raise ValueError(f"{replica_dir}: missing protein backbone or ligand heavy atoms")
 
     _emit_replica_step(progress_callback, 1, step_total, "Imaging trajectory, aligning, and preparing analysis reference")
-    imaged_traj = image_ligand_near_protein(raw_traj, ligand_residue)
+    imaged_traj = image_ligand_near_protein(raw_traj, ligand_residues)
     del raw_traj
     if reference is None:
         reference = build_average_reference(imaged_traj, protein_bb)
@@ -189,7 +233,7 @@ def process_replica(
     hbond_count = compute_counts_from_boolean_dict(hbond_triplet_present, imaged_traj.n_frames)
 
     _emit_replica_step(progress_callback, 5, step_total, "Computing salt bridges")
-    salt_pair_rows, salt_residue_rows, salt_residue_present, salt_pair_present = compute_salt_bridges(imaged_traj, ligand_residue, ligand_sdf_path, cfg.salt_bridge_cutoff_nm)
+    salt_pair_rows, salt_residue_rows, salt_residue_present, salt_pair_present = compute_salt_bridges(imaged_traj, ligand_all, ligand_sdf_path, cfg.salt_bridge_cutoff_nm)
     write_dict_csv(out_dir / "salt_bridge_atom_pairs.csv", salt_pair_rows, ["type", "protein_residue", "protein_atom", "ligand_atom", "occupancy", "mean_distance_A", "min_distance_A"])
     write_dict_csv(out_dir / "salt_bridge_residue_occupancy.csv", salt_residue_rows, ["protein_residue", "salt_bridge_occupancy"])
     salt_bridge_count = compute_counts_from_boolean_dict(salt_pair_present, imaged_traj.n_frames)
@@ -265,7 +309,7 @@ def process_replica(
         "replica": Path(replica_dir).name,
         "n_frames": int(aligned_traj.n_frames),
         "simulation_time_ns": float(time_ns[-1] if len(time_ns) > 0 else 0.0),
-        "ligand_residue": f"chain{ligand_residue.chain.index}_{ligand_residue.name}{ligand_residue.resSeq}",
+        "ligand_residue": ligand_residue_summary(ligand_residues),
         "protein_backbone_rmsd_mean_A": float(np.mean(protein_rmsd_A)),
         "protein_backbone_rmsd_max_A": float(np.max(protein_rmsd_A)),
         "ligand_heavy_rmsd_mean_A": float(np.mean(ligand_rmsd_A)),

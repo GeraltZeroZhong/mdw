@@ -7,7 +7,17 @@ import numpy as np
 
 from ...config import AdvancedAnalysisConfig, PlotSelectionConfig, PlotStyleConfig
 from ...config.plot_style_defaults import apply_plot_style_palette
-from ...core import check_input_file, ensure_dir, find_ligand_residue, require_nonempty_file, resolve_replica_dirs, save_csv, write_json
+from ...core import (
+    check_input_file,
+    ensure_dir,
+    find_ligand_residues,
+    ligand_atom_indices_from_residues,
+    ligand_heavy_atom_indices_from_residues,
+    require_nonempty_file,
+    resolve_replica_dirs,
+    save_csv,
+    write_json,
+)
 from ...core.progress import ProgressCallback, emit_progress
 from ...plotting.advanced import (
     plot_chapman_kolmogorov_test,
@@ -168,8 +178,8 @@ def _export_cluster_snapshots(replica_dirs, trajectories, labels, embed, frame_o
             str(pdb_path),
         ])
         protein_ca = frame.topology.select("protein and name CA")
-        ligand_res = next(res for res in frame.topology.residues if (not res.is_protein) and res.name.upper() not in _ION_OR_WATER_NAMES)
-        ligand_heavy = [a.index for a in ligand_res.atoms if a.element is not None and a.element.symbol != "H"]
+        ligand_residues = find_ligand_residues(frame.topology, excluded=_ION_OR_WATER_NAMES)
+        ligand_heavy = ligand_heavy_atom_indices_from_residues(ligand_residues)
         protein_segments = _continuous_ca_segments(frame, protein_ca)
         protein_ss = _protein_secondary_structure(frame, protein_ca)
         protein_contact_mask = _protein_contact_mask(frame, protein_ca, ligand_heavy, cfg.pocket_ca_cutoff_nm)
@@ -287,9 +297,9 @@ def run_advanced_analysis(
             topology_frame = md.load_pdb(str(top))
         except OSError as exc:
             raise ValueError(f"{replica_dir.name}: 无法读取拓扑文件 {top}") from exc
-        topology_ligand = find_ligand_residue(topology_frame.topology)
+        topology_ligands = find_ligand_residues(topology_frame.topology)
         solute_atom_indices = sorted(
-            set(map(int, topology_frame.topology.select("protein"))) | {int(atom.index) for atom in topology_ligand.atoms}
+            set(map(int, topology_frame.topology.select("protein"))) | set(ligand_atom_indices_from_residues(topology_ligands))
         )
         if not solute_atom_indices:
             raise ValueError(f"{replica_dir.name}: missing protein or ligand atoms")
@@ -297,8 +307,8 @@ def run_advanced_analysis(
             traj = md.load(str(dcd), top=str(top), atom_indices=solute_atom_indices)
         except OSError as exc:
             raise ValueError(f"{replica_dir.name}: 无法读取轨迹文件 {dcd}") from exc
-        ligand_residue = find_ligand_residue(traj.topology)
-        trajectories.append(image_ligand_near_protein(traj, ligand_residue))
+        ligand_residues = find_ligand_residues(traj.topology)
+        trajectories.append(image_ligand_near_protein(traj, ligand_residues))
 
     emit_progress(progress_callback, 1, step_total, "advanced_analysis", "Aligning trajectories to the reference structure")
     align_atoms = trajectories[0].topology.select(cfg.align_selection)

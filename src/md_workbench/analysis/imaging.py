@@ -10,6 +10,11 @@ def _copy_or_make_whole(traj: md.Trajectory) -> md.Trajectory:
         return traj[:]
 
 
+def _ligand_atom_set(ligand_residue_or_residues) -> set:
+    residues = ligand_residue_or_residues if isinstance(ligand_residue_or_residues, (list, tuple, set)) else [ligand_residue_or_residues]
+    return {atom for residue in residues for atom in residue.atoms}
+
+
 def image_ligand_near_protein(traj: md.Trajectory, ligand_residue) -> md.Trajectory:
     """Return a trajectory with protein anchors centered and the ligand imaged nearby."""
     if traj.n_frames == 0:
@@ -17,7 +22,7 @@ def image_ligand_near_protein(traj: md.Trajectory, ligand_residue) -> md.Traject
     if traj.unitcell_lengths is None:
         return _copy_or_make_whole(traj)
 
-    ligand_atoms = set(ligand_residue.atoms)
+    ligand_atoms = _ligand_atom_set(ligand_residue)
     try:
         molecules = traj.topology.find_molecules()
     except Exception as exc:
@@ -31,7 +36,7 @@ def image_ligand_near_protein(traj: md.Trajectory, ligand_residue) -> md.Traject
     try:
         return traj.image_molecules(
             anchor_molecules=protein_molecules,
-            other_molecules=[ligand_molecules[0]],
+            other_molecules=ligand_molecules,
             make_whole=True,
             inplace=False,
         )

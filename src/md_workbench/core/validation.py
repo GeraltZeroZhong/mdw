@@ -96,6 +96,10 @@ def preflight_validate(cfg: WorkflowConfig) -> ValidationResult:
             ligand_sdf = Path(cfg.docking.ligand_sdf_input)
             if not ligand_sdf.exists():
                 add_error(f"Ligand input mode is 'sdf' but the SDF file was not found: {ligand_sdf}")
+        elif ligand_mode == "pdb":
+            ligand_pdb = Path(cfg.docking.ligand_pdb_input)
+            if not ligand_pdb.exists():
+                add_error(f"Ligand input mode is 'pdb' but the PDB file was not found: {ligand_pdb}")
         else:
             add_error(f"Unsupported ligand input mode: {cfg.docking.ligand_input_mode}")
 
@@ -109,7 +113,10 @@ def preflight_validate(cfg: WorkflowConfig) -> ValidationResult:
         elif docking_mode == "skip":
             add_warning("Docking mode is 'skip'. MD will use the prepared ligand directly instead of a docked pose.")
 
-        if docking_mode == "auto":
+        if ligand_mode == "pdb" and docking_mode in {"auto", "external"}:
+            add_error("ligand_input_mode='pdb' currently supports docking_mode='skip' only. Peptide/PDB docking is not implemented.")
+
+        if docking_mode == "auto" and ligand_mode != "pdb":
             search_mode = str(cfg.docking.search_space_mode).strip().lower()
             if search_mode not in {"auto", "manual"}:
                 add_error(f"Unsupported docking search-space mode: {cfg.docking.search_space_mode}")
@@ -152,7 +159,7 @@ def preflight_validate(cfg: WorkflowConfig) -> ValidationResult:
                                 "This is convenient for exploration but weaker than a literature-grade, site-specific box."
                             )
 
-        if docking_mode == "auto":
+        if docking_mode == "auto" and ligand_mode != "pdb":
             required_binaries = ["mk_prepare_receptor.py", "mk_prepare_ligand.py", "mk_export.py", "vina"]
             missing = [name for name in required_binaries if not _check_binary(name)]
             for name in missing:
@@ -205,6 +212,7 @@ def preflight_validate(cfg: WorkflowConfig) -> ValidationResult:
                     str(Path(cfg.prep.receptor_output)),
                     str(Path(cfg.docking.extracted_pose_sdf)),
                     str(Path(cfg.docking.ligand_output_sdf)),
+                    str(Path(cfg.docking.ligand_output_pdb)),
                 }
                 if str(protein_path) not in generated and not protein_path.exists():
                     add_error(f"MD protein input file was not found: {protein_path}")
@@ -274,7 +282,7 @@ def preflight_validate_existing_results(cfg: WorkflowConfig) -> ValidationResult
     if cfg.do_basic_analysis:
         ligand = Path(cfg.basic.ligand_sdf)
         if not ligand.exists():
-            add_error(f"Basic analysis ligand SDF was not found: {ligand}")
+            add_error(f"Basic analysis ligand structure file was not found: {ligand}")
         _require_replica_files(
             cfg.basic.replica_root,
             cfg.basic.replica_glob,

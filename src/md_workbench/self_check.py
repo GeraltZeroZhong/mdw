@@ -116,6 +116,9 @@ def run_self_check(cfg: WorkflowConfig) -> dict:
         elif mode == "sdf":
             p = Path(cfg.docking.ligand_sdf_input)
             (ok if p.exists() else fail)("ligand_sdf_input", str(p))
+        elif mode == "pdb":
+            p = Path(cfg.docking.ligand_pdb_input)
+            (ok if p.exists() else fail)("ligand_pdb_input", str(p))
         else:
             fail("ligand_input_mode", f"Unsupported ligand_input_mode: {cfg.docking.ligand_input_mode}")
 
@@ -125,7 +128,9 @@ def run_self_check(cfg: WorkflowConfig) -> dict:
         elif docking_mode == "external":
             p = Path(cfg.docking.external_docking_sdf)
             (ok if p.exists() else fail)("external_docking_sdf", str(p))
-        elif docking_mode == "auto":
+        if mode == "pdb" and docking_mode in {"auto", "external"}:
+            fail("pdb_ligand_docking_mode", "ligand_input_mode=pdb currently requires docking_mode=skip")
+        elif docking_mode == "auto" and mode != "pdb":
             for binary_name, present in report["binary_availability"].items():
                 (ok if present else fail)(f"binary_{binary_name}", binary_name)
             if str(cfg.docking.search_space_mode).strip().lower() == "manual":
@@ -144,7 +149,7 @@ def run_self_check(cfg: WorkflowConfig) -> dict:
 
     if cfg.do_run_md:
         protein_pdb, ligand_sdf = infer_run_input_paths(cfg)
-        for label, path in [("run_protein_pdb", protein_pdb), ("run_ligand_sdf", ligand_sdf)]:
+        for label, path in [("run_protein_pdb", protein_pdb), ("run_ligand_structure", ligand_sdf)]:
             p = Path(path)
             if p.exists():
                 ok(label, str(p))
@@ -152,6 +157,7 @@ def run_self_check(cfg: WorkflowConfig) -> dict:
                 str(Path(cfg.prep.receptor_output)),
                 str(Path(cfg.docking.extracted_pose_sdf)),
                 str(Path(cfg.docking.ligand_output_sdf)),
+                str(Path(cfg.docking.ligand_output_pdb)),
             }:
                 ok(label, f"Will be generated during prep: {p}")
             else:
@@ -187,7 +193,7 @@ def run_self_check(cfg: WorkflowConfig) -> dict:
             else:
                 fail("basic_replica_dirs", f"No {cfg.basic.replica_glob} directories found under {cfg.basic.replica_root}")
             ligand = Path(cfg.basic.ligand_sdf)
-            (ok if ligand.exists() else fail)("basic_ligand_sdf", str(ligand))
+            (ok if ligand.exists() else fail)("basic_ligand_structure", str(ligand))
         if cfg.do_waterbridge_analysis:
             dirs = resolve_replica_dirs(cfg.waterbridge.replica_root, cfg.waterbridge.replica_glob)
             if dirs:

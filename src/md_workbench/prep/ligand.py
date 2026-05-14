@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -19,6 +20,15 @@ def _read_sdf_molecules(sdf_path: str, error_message: str = "No valid molecules 
 def validate_sdf_has_molecules(sdf_path: str, error_message: str = "No valid molecules were read from the SDF file.") -> str:
     _read_sdf_molecules(sdf_path, error_message=error_message)
     return str(sdf_path)
+
+
+def validate_pdb_has_atoms(pdb_path: str, error_message: str = "No ATOM/HETATM records were read from the ligand PDB file.") -> str:
+    path = check_input_file(pdb_path)
+    with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            if line.startswith(("ATOM", "HETATM")):
+                return str(path)
+    raise ValueError(error_message)
 
 
 def _read_single_input_ligand_molecule(sdf_path: str, error_message: str) -> Chem.Mol:
@@ -96,6 +106,15 @@ def prepare_ligand_from_sdf(input_sdf: str, out_sdf: str) -> str:
     writer = Chem.SDWriter(str(dst))
     writer.write(mol)
     writer.close()
+    return str(dst)
+
+
+def prepare_ligand_from_pdb(input_pdb: str, out_pdb: str) -> str:
+    src = Path(validate_pdb_has_atoms(input_pdb))
+    dst = Path(out_pdb)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.resolve() != dst.resolve():
+        shutil.copy2(src, dst)
     return str(dst)
 
 

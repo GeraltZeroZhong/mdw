@@ -105,6 +105,8 @@ def detect_ligand_rotatable_dihedrals(ligand_sdf_path: str, ligand_atom_indices:
     path = Path(ligand_sdf_path)
     if not path.exists():
         return []
+    if path.suffix.lower() not in {".sdf", ".sd"}:
+        return []
     mol = Chem.MolFromMolFile(str(path), removeHs=False)
     if mol is None or mol.GetNumAtoms() != len(ligand_atom_indices):
         return []
